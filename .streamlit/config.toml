@@ -1,0 +1,68 @@
+[theme]
+base = "light"
+
+# Palette inspirée du design de tertullien.com (identité médicale d'urgence) :
+# fond neutre + marque vert forêt profond + accent ambre, cartes/boutons blancs
+# avec ombres légèrement teintées de vert. Les couleurs de statut (vert/ambre/
+# rouge/gris) restent volontairement alignées sur celles déjà utilisées dans les
+# graphiques Plotly de l'application (utils/data.py) pour que « OK »/« alerte »/
+# « critique » gardent le même sens partout — seul l'habillage (pas les
+# graphiques) change ici.
+primaryColor = "#14532D"              # vert Tertullien — boutons, liens, focus, onglet actif
+backgroundColor = "#FFFFFF"           # contenu principal (markdown, titres) — reste blanc
+secondaryBackgroundColor = "#F0F2F5"  # canevas gris clair derrière les widgets (ton du hero Tertullien)
+textColor = "#1C1E21"
+linkColor = "#14532D"
+borderColor = "#CED0D4"
+codeBackgroundColor = "#F0F2F5"
+codeTextColor = "#1C1E21"
+
+# Couleurs sémantiques — identiques à utils/data.py (GREEN/AMBER/RED/BLUE/GREY)
+# pour ne jamais contredire les graphiques et badges de statut existants.
+greenColor = "#2E7D32"
+greenBackgroundColor = "#E6F2E7"
+greenTextColor = "#1B4D1E"
+orangeColor = "#C77800"
+orangeBackgroundColor = "#FBEEDD"
+orangeTextColor = "#8A5400"
+redColor = "#C00000"
+redBackgroundColor = "#FBE4E4"
+redTextColor = "#8A0000"
+blueColor = "#2E5C99"
+grayColor = "#8A8A8A"
+
+dataframeBorderColor = "#CED0D4"
+dataframeHeaderBackgroundColor = "#F0FDF4"
+dataframeHeaderTextColor = "#14532D"
+
+# Typographie Tertullien : Outfit pour les titres (géométrique, gras),
+# Plus Jakarta Sans pour le texte courant et les widgets.
+font = "'Plus Jakarta Sans':https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+headingFont = "Outfit:https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&display=swap"
+baseFontSize = 15
+baseFontWeight = 400
+headingFontWeights = [800, 700, 700, 600, 600, 600]
+linkUnderline = false
+
+baseRadius = "14px"
+buttonRadius = "12px"
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.sidebar]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F5"
+textColor = "#1C1E21"
+borderColor = "#CED0D4"
+primaryColor = "#14532D"
+
+[server]
+maxUploadSize = 50
+
+[client]
+# Pas de détail technique (traces d'erreur) affiché aux utilisateurs ; menu développeur masqué
+showErrorDetails = false
+toolbarMode = "viewer"
+
+[browser]
+gatherUsageStats = false

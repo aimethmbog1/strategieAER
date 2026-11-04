@@ -1,0 +1,543 @@
+{
+  "ECHELONS": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G"
+  ],
+  "GRILLE": {
+    "1": [
+      36270,
+      37616,
+      38913,
+      40315,
+      41666,
+      43013,
+      44359
+    ],
+    "2": [
+      43013,
+      45794,
+      48580,
+      51362,
+      54148,
+      56929,
+      59710
+    ],
+    "3": [
+      55930,
+      60819,
+      65708,
+      70597,
+      75486,
+      80375,
+      85264
+    ],
+    "4": [
+      76270,
+      81860,
+      87444,
+      93033,
+      99169,
+      104202,
+      109234
+    ],
+    "5": [
+      98767,
+      104500,
+      110233,
+      115972,
+      121699,
+      127438,
+      133177
+    ],
+    "6": [
+      123029,
+      129358,
+      135693,
+      142022,
+      148412,
+      154686,
+      160960
+    ],
+    "7": [
+      127841,
+      137956,
+      148059,
+      158173,
+      168277,
+      178391,
+      188506
+    ],
+    "8": [
+      178391,
+      190283,
+      202174,
+      214065,
+      225957,
+      237842,
+      249728
+    ],
+    "9": [
+      225294,
+      245005,
+      264721,
+      284431,
+      304147,
+      323862,
+      343578
+    ],
+    "10": [
+      266128,
+      280353,
+      294247,
+      308153,
+      322053,
+      335958,
+      349863
+    ],
+    "11": [
+      335958,
+      349863,
+      363763,
+      377663,
+      391563,
+      405468,
+      419374
+    ],
+    "12": [
+      405468,
+      419368,
+      433279,
+      447179,
+      461079,
+      474984,
+      488889
+    ]
+  },
+  "PAR_GROUPE": {
+    "logement_taux": [
+      0.3,
+      0.35,
+      0.45
+    ],
+    "deplacement": [
+      15000,
+      30000,
+      50000
+    ],
+    "technicite": [
+      0,
+      15000,
+      25000
+    ],
+    "af_forfait": [
+      30170,
+      49000,
+      73850
+    ]
+  },
+  "PALIERS": [
+    "Aucun",
+    "P1",
+    "P2",
+    "P3"
+  ],
+  "PAR_PALIER": {
+    "logement": [
+      180000,
+      200000,
+      250000
+    ],
+    "deplacement": [
+      100000,
+      110000,
+      185000
+    ],
+    "technicite": [
+      40000,
+      40000,
+      50000
+    ],
+    "sujetion": [
+      100000,
+      110000,
+      200000
+    ],
+    "representation": [
+      0,
+      70000,
+      175000
+    ],
+    "af": [
+      85000,
+      90000,
+      100000
+    ],
+    "fonction": [
+      45000,
+      50000,
+      60000
+    ],
+    "carburant": [
+      60000,
+      80000,
+      100000
+    ],
+    "communication": [
+      40000,
+      60000,
+      75000
+    ]
+  },
+  "DIVERS": {
+    "supplement_enfant": 2400,
+    "astreinte": 30000,
+    "prime_installation": 1500000,
+    "medaille_argent": 100000,
+    "medaille_vermeil": 175000,
+    "medaille_or": 300000
+  },
+  "OPTIONS": {
+    "mode_logement": "Forfait palier",
+    "mode_deplacement": "Forfait palier",
+    "mode_technicite": "Forfait palier",
+    "mode_af": "Forfait palier",
+    "supplement_enfant_responsables": "Oui",
+    "carburant_en_paie": "Non",
+    "communication_en_paie": "Non",
+    "base_13e_mois": "Salaire de base",
+    "presence_min_13e": 3,
+    "diviseur_journalier": 30,
+    "duree_interim_min": 1
+  },
+  "ELEMENTS": [
+    "Salaire de base",
+    "Indemnité de logement",
+    "Indemnité de déplacement",
+    "Prime de technicité",
+    "Prime de sujétion",
+    "Prime de représentation",
+    "Allocation familiale société",
+    "Prime de fonction",
+    "Prime d'astreinte",
+    "Dotation carburant (en paie)",
+    "Crédit de communication (en paie)"
+  ],
+  "SOUMIS_CNPS": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "SOUMIS_IRPP": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "OCCASIONNELS": [
+    "13e mois",
+    "Prime d'installation",
+    "Médaille du travail",
+    "Gratification exceptionnelle"
+  ],
+  "OCC_CNPS": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "OCC_IRPP": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "STATUTS": {
+    "Recruté AER": {
+      "cnps": 1,
+      "detache": 0
+    },
+    "Agent de l'État mis à disposition": {
+      "cnps": 1,
+      "detache": 0
+    },
+    "Fonctionnaire détaché": {
+      "cnps": 0,
+      "detache": 1
+    }
+  },
+  "SITUATIONS": {
+    "Normal": [
+      1.0,
+      1.0
+    ],
+    "Congé annuel": [
+      1.0,
+      1.0
+    ],
+    "Maladie — période à plein salaire": [
+      1.0,
+      1.0
+    ],
+    "Maladie — au-delà du plein salaire": [
+      0.0,
+      0.0
+    ],
+    "Accident du travail (complément AER)": [
+      1.0,
+      1.0
+    ],
+    "Congé de maternité": [
+      0.0,
+      1.0
+    ],
+    "Suspension exceptionnelle": [
+      0.0,
+      0.0
+    ],
+    "Obligations militaires": [
+      0.0,
+      0.0
+    ],
+    "Mise à pied (jours à saisir)": [
+      1.0,
+      1.0
+    ]
+  },
+  "RETENUES": {
+    "cnps_sal": 0.042,
+    "cnps_plafond": 750000,
+    "cfc_sal": 0.01,
+    "abattement_frais_pro": 0.3,
+    "abattement_annuel": 500000,
+    "seuil_irpp": 62000,
+    "cac": 0.1,
+    "irpp_bornes": [
+      2000000,
+      3000000,
+      5000000
+    ],
+    "irpp_taux": [
+      0.1,
+      0.15,
+      0.25,
+      0.35
+    ]
+  },
+  "PATRONAL": {
+    "pvid": 0.042,
+    "af": 0.07,
+    "at": 0.0175,
+    "cfc_pat": 0.015,
+    "fne": 0.01
+  },
+  "RAV": [
+    [
+      0,
+      0
+    ],
+    [
+      50001,
+      750
+    ],
+    [
+      100001,
+      1950
+    ],
+    [
+      200001,
+      3250
+    ],
+    [
+      300001,
+      4550
+    ],
+    [
+      400001,
+      5850
+    ],
+    [
+      500001,
+      7150
+    ],
+    [
+      600001,
+      8450
+    ],
+    [
+      700001,
+      9750
+    ],
+    [
+      800001,
+      11050
+    ],
+    [
+      900001,
+      12350
+    ],
+    [
+      1000001,
+      13000
+    ]
+  ],
+  "TDL": [
+    [
+      0,
+      0
+    ],
+    [
+      62001,
+      250
+    ],
+    [
+      75001,
+      500
+    ],
+    [
+      100001,
+      750
+    ],
+    [
+      125001,
+      1000
+    ],
+    [
+      150001,
+      1250
+    ],
+    [
+      200001,
+      1500
+    ],
+    [
+      250001,
+      2000
+    ],
+    [
+      300001,
+      2250
+    ],
+    [
+      500001,
+      2500
+    ]
+  ],
+  "PREAVIS": {
+    "1": [
+      0.5,
+      1,
+      2
+    ],
+    "2": [
+      1,
+      2,
+      3
+    ],
+    "3": [
+      1,
+      3,
+      4
+    ]
+  },
+  "LICENCIEMENT": {
+    "bornes": [
+      5,
+      10,
+      15,
+      20
+    ],
+    "taux": [
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4
+    ]
+  },
+  "RUPTURE": {
+    "anciennete_min_licenciement": 2,
+    "mult_deces": 2,
+    "mult_retraite": 2,
+    "bonne_separation": 0.05,
+    "jours_conge_par_mois": 1.5,
+    "age_retraite": 60
+  },
+  "MALADIE": [
+    [
+      0,
+      3
+    ],
+    [
+      5,
+      4
+    ],
+    [
+      10,
+      5
+    ],
+    [
+      15,
+      6
+    ]
+  ],
+  "ESSAI": {
+    "1-2": "15 jours",
+    "3-4": "1 mois",
+    "5-6": "2 mois",
+    "7-9": "3 mois",
+    "10-12": "4 mois"
+  },
+  "CONGE": {
+    "base_jours": 18,
+    "bonus_par_5_ans": 2,
+    "bonus_mere_par_enfant_moins_5_ans": 2
+  },
+  "MISSION": {
+    "P3": [
+      80000,
+      180000
+    ],
+    "P2": [
+      60000,
+      150000
+    ],
+    "P1": [
+      50000,
+      140000
+    ],
+    "G3": [
+      40000,
+      120000
+    ],
+    "G2": [
+      30000,
+      100000
+    ],
+    "G1": [
+      20000,
+      80000
+    ]
+  },
+  "AVANCE_PLAFOND": 0.25,
+  "_source": "Statut du personnel AER (CA du 22/01/2020) ; IRPP : DGI. RAV/TDL et assujettissements : à valider."
+}

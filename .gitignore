@@ -1,0 +1,9 @@
+# Secrets et données locales — ne jamais publier
+.streamlit/secrets.toml
+data/aer_registres.sqlite
+data/*.sqlite-journal
+# Environnements et caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
