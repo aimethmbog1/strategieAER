@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from utils.ui import inject_base_style  # thème de l'application + contrôle d'accès
+from utils.ui import inject_base_style, BarreChargement  # thème de l'application + contrôle d'accès
 from utils.theme_compteurs import (
     PAGE_ICON, APP_TITLE, NAVY, BLUE, GOLD, GREY, CATEGORICAL, BG_SURFACE,
     inject_component_style, section_title, kpi_row, mini_metric, status_badge,
@@ -20,7 +20,7 @@ from utils.compteurs import (
     coverage_stats, regional_breakdown, detect_duplicates, detect_dormant_postes,
     data_quality_summary, build_pdf_report,
     load_puissances_sites, saturation_par_site, WATTS_PAR_COMPTEUR,
-    SEUIL_SATURATION_AVERTISSEMENT, cache_dataframe,
+    SEUIL_SATURATION_AVERTISSEMENT, cache_dataframe, lire_fichier_compteurs,
 )
 
 st.set_page_config(page_title=APP_TITLE, page_icon=PAGE_ICON, layout="wide")
@@ -97,15 +97,22 @@ uploaded_files = st.sidebar.file_uploader(
 )
 
 df = None
+barre = None
 if uploaded_files:
+    # Barre affichée seulement quand le jeu de fichiers change (les relectures sont en cache).
+    signature = tuple(sorted((uf.name, uf.size) for uf in uploaded_files))
+    if st.session_state.get("_cpt_signature") != signature:
+        barre = BarreChargement("Chargement des fichiers de compteurs…", total=len(uploaded_files) + 2)
     lus, erreurs = [], []
-    for uf in uploaded_files:
+    for i, uf in enumerate(uploaded_files, start=1):
         try:
-            feuilles = read_excel_sheet_names(uf)
-            raw = load_excel(uf, sheet_name=feuilles[0] if feuilles else 0)
+            raw = lire_fichier_compteurs(uf.name, uf.getvalue())
         except Exception as e:  # noqa: BLE001
             erreurs.append(f"{uf.name} : {e}")
             continue
+        finally:
+            if barre:
+                barre.etape(f"Lecture du fichier {i}/{len(uploaded_files)} : {uf.name}")
         lus.append({"nom": uf.name, "df": raw})
     for e in erreurs:
         st.sidebar.error(e)
@@ -144,8 +151,14 @@ if uploaded_files:
                 "automatiquement — dépose-les un par un pour une correspondance manuelle des colonnes."
             )
 
+    if barre:
+        barre.etape("Assemblage des lots et rapprochement des localités")
     if df_brut is not None and not df_brut.empty:
         df = locality_cleanup_ui(df_brut)
+    if barre:
+        barre.etape("Données prêtes")
+        barre.fin()
+        st.session_state["_cpt_signature"] = signature
 
 if df is None:
     st.sidebar.info(
