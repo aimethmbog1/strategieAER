@@ -52,6 +52,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
+import io
+
 import pandas as pd
 import streamlit as st
 
@@ -174,6 +176,14 @@ COLONNES_HOLLEY_ATTENDUES = {"Full Address", "Template Code"}
 
 def est_format_holley(raw: pd.DataFrame) -> bool:
     return COLONNES_HOLLEY_ATTENDUES.issubset(set(raw.columns))
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def lire_fichier_compteurs(nom: str, contenu: bytes) -> pd.DataFrame:
+    """Lit la première feuille d'un export (mis en cache par contenu : un fichier déjà
+    lu n'est pas relu à chaque interaction)."""
+    feuilles = read_excel_sheet_names(io.BytesIO(contenu))
+    return load_excel(io.BytesIO(contenu), sheet_name=feuilles[0] if feuilles else 0)
 
 
 def read_excel_sheet_names(uploaded_file) -> list[str]:

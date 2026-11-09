@@ -37,7 +37,17 @@ def get_data() -> AERData | None:
         st.caption(f"Fichier actif : **{st.session_state.get('file_name', '—')}**")
 
     try:
-        return load_workbook_data(st.session_state["file_bytes"])
+        contenu = st.session_state["file_bytes"]
+        signature = (st.session_state.get("file_name"), len(contenu))
+        if st.session_state.get("_classeur_lu") == signature:
+            return load_workbook_data(contenu)  # déjà en cache : pas de barre
+        from .ui import BarreChargement
+        with BarreChargement("Lecture du classeur de données…", total=2) as barre:
+            barre.etape("Ouverture du classeur")
+            data = load_workbook_data(contenu)
+            barre.etape("Classeur chargé")
+        st.session_state["_classeur_lu"] = signature
+        return data
     except Exception as exc:  # noqa: BLE001
         st.error(f"Impossible de lire ce classeur : {exc}")
         return None

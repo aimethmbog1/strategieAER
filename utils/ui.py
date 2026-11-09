@@ -108,6 +108,37 @@ def style_map(styler, func, subset=None):
     return styler.applymap(func, subset=subset)
 
 
+class BarreChargement:
+    """Barre de progression visible pendant un chargement de données, retirée à la fin.
+
+    Usage :
+        with BarreChargement("Lecture des fichiers…", total=3) as barre:
+            ...; barre.etape("Fichier 1 lu")
+    """
+
+    def __init__(self, libelle: str = "Chargement des données…", total: int = 1, conteneur=None):
+        self.total = max(int(total), 1)
+        self.fait = 0
+        self.libelle = libelle
+        self._zone = (conteneur or st).empty()
+        self._barre = self._zone.progress(0.0, text=f"⏳ {libelle}")
+
+    def etape(self, texte: str | None = None, n: int = 1) -> None:
+        self.fait = min(self.fait + n, self.total)
+        pct = self.fait / self.total
+        self._barre.progress(pct, text=f"⏳ {texte or self.libelle} — {round(pct * 100)} %")
+
+    def fin(self) -> None:
+        self._zone.empty()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.fin()
+        return False
+
+
 def kpi_row(items: list[tuple[str, str, str | None]]):
     """items: liste de (label, valeur, delta_ou_None)."""
     cols = st.columns(len(items))

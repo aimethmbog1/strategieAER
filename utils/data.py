@@ -252,7 +252,7 @@ def _parse_equipes(ws) -> tuple[pd.DataFrame, pd.DataFrame]:
     return equipes_df, unassigned
 
 
-@st.cache_data(show_spinner="Lecture du classeur…")
+@st.cache_data(show_spinner=False)
 def load_workbook_data(file_bytes: bytes) -> AERData:
     wb = _load_workbook(file_bytes)
     data = AERData()
