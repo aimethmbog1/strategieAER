@@ -50,12 +50,57 @@ REGISTRES = {
 }
 
 
+_RACINE = Path(__file__).resolve().parent.parent
+
+
+def _normaliser_url(url: str) -> str:
+    """Neon (et la plupart des hébergeurs) fournissent « postgres://… » ou « postgresql://… » :
+    SQLAlchemy a besoin du pilote explicite « postgresql+psycopg2:// ». Le reste (dont
+    ?sslmode=require&channel_binding=require) est conservé tel quel."""
+    url = url.strip().strip('"').strip("'")
+    for prefixe in ("postgres://", "postgresql://"):
+        if url.startswith(prefixe):
+            return "postgresql+psycopg2://" + url[len(prefixe):]
+    return url
+
+
+def _depuis_fichier_env(cle: str) -> str | None:
+    """Lit une variable dans .env.local puis .env à la racine du projet (fichiers écrits par
+    `neon env pull` / `neon deploy`, ignorés par git) — utile en exécution locale."""
+    for nom in (".env.local", ".env"):
+        f = _RACINE / nom
+        if f.exists():
+            for ligne in f.read_text(encoding="utf-8").splitlines():
+                ligne = ligne.strip()
+                if ligne.startswith("export "):
+                    ligne = ligne[7:]
+                if ligne.startswith(cle + "="):
+                    return ligne.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
 def _url() -> str:
+    """Adresse de la base, par ordre de priorité :
+    1. secrets Streamlit  [database] url = "…"  ;
+    2. variable DATABASE_URL (secret Streamlit de premier niveau, variable d'environnement,
+       ou fichier .env.local / .env écrit par le CLI Neon) — chaîne « pooled » de Neon ;
+    3. à défaut, fichier SQLite local."""
+    import os
     try:
-        return str(st.secrets["database"]["url"])
+        return _normaliser_url(str(st.secrets["database"]["url"]))
     except Exception:  # noqa: BLE001
-        SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        return f"sqlite:///{SQLITE_PATH}"
+        pass
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        try:
+            url = str(st.secrets["DATABASE_URL"])
+        except Exception:  # noqa: BLE001
+            url = None
+    url = url or _depuis_fichier_env("DATABASE_URL")
+    if url:
+        return _normaliser_url(url)
+    SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{SQLITE_PATH}"
 
 
 def moteur_description() -> str:
@@ -75,7 +120,7 @@ def moteur_ephemere() -> bool:
 @st.cache_resource(show_spinner=False)
 def _engine(url: str):
     from sqlalchemy import create_engine, text
-    eng = create_engine(url, pool_pre_ping=True)
+    eng = create_engine(url, pool_pre_ping=True, pool_recycle=300)
     with eng.begin() as cx:
         cx.execute(text("CREATE TABLE IF NOT EXISTS aer_registres (nom VARCHAR(80) PRIMARY KEY, "
                         "contenu TEXT NOT NULL, maj VARCHAR(32), auteur VARCHAR(80))"))
