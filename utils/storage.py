@@ -231,7 +231,7 @@ def sauvegarde_complete() -> bytes:
             morceaux = [s[i:i + 30000] for i in range(0, len(s), 30000)] or [""]
             pd.DataFrame({"json": morceaux}).to_excel(xw, sheet_name=nom[:31], index=False)
             df.to_excel(xw, sheet_name=("v_" + nom)[:31], index=False)  # lecture humaine
-        pd.DataFrame(index).to_excel(xw, sheet_name="_index", index=False)
+        pd.DataFrame(index, columns=["nom", "lignes"]).to_excel(xw, sheet_name="_index", index=False)
         lire_journal(100000).to_excel(xw, sheet_name="_journal", index=False)
     return buf.getvalue()
 
@@ -239,7 +239,12 @@ def sauvegarde_complete() -> bytes:
 def restaurer(fichier) -> list[str]:
     """Restaure les registres d'une sauvegarde complète. Renvoie la liste des registres restaurés."""
     xls = pd.ExcelFile(fichier)
+    if "_index" not in xls.sheet_names:
+        raise ValueError("ce fichier n'est pas une sauvegarde complète de l'application (feuille « _index » absente).")
     idx = pd.read_excel(xls, sheet_name="_index")
+    if "nom" not in idx.columns or idx.empty:
+        raise ValueError("cette sauvegarde ne contient aucun registre : elle a été faite alors qu'aucune donnée "
+                         "n'était enregistrée. Il n'y a rien à restaurer.")
     faits = []
     for nom in idx["nom"].astype(str):
         if nom not in REGISTRES or nom[:31] not in xls.sheet_names:
