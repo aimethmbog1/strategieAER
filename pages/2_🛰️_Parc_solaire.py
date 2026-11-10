@@ -24,6 +24,7 @@ st.caption("État de fonctionnement des centrales, suivi de la maintenance (arr�
 from utils import maintenance as mt
 from utils.personnel import get_effective_roster
 from utils.storage import mettre_a_jour, session_ou_stockage
+from utils import gmao_ui
 
 ref_sites = mt.referentiel_sites(data.sites) if data.sites is not None and not data.sites.empty else None
 reg = mt.normaliser(session_ou_stockage(mt.REGISTRE, mt.registre_vide))
@@ -42,43 +43,50 @@ if st.session_state.get("_mt_ok"):
 
 if ref_sites is not None:
     section_title("ÉTAT DE FONCTIONNEMENT DU PARC")
-    etat = mt.etat_parc(ref_sites, reg)
+    classes = gmao_ui.classes_sites(ref_sites)
+    etat = mt.etat_parc(ref_sites, reg, classes)
     tot = etat[etat["Phase"] == "Total parc"].iloc[0]
+    _f = lambda x, d=1: f"{x:,.{d}f}".replace(",", " ").replace(".", ",")
     kpi_row([
-        ("Centrales fonctionnelles", f"{int(tot['Fonctionnelles'])} / {int(tot['Centrales'])}",
-         f"{tot['% centrales fonctionnelles']:.1f} %".replace(".", ",")),
+        ("Centrales en service", f"{int(tot['Fonctionnelles'])} / {int(tot['Centrales'])}",
+         f"{_f(tot['% centrales en service'])} % du parc"),
+        ("dont partiel", str(int(tot["Fonctionnement partiel"])), None),
         ("Centrales à l'arrêt", str(int(tot["À l'arrêt"])), None),
-        ("Puissance fonctionnelle (kWc)", f"{tot['Puissance fonctionnelle (kWc)']:,.1f}".replace(",", " ").replace(".", ","),
-         f"{tot['% puissance fonctionnelle']:.1f} % du parc".replace(".", ",")),
-        ("Puissance installée (kWc)", f"{tot['Puissance totale (kWc)']:,.1f}".replace(",", " ").replace(".", ","), None),
+        ("État non renseigné", str(int(tot["Non renseigné"])), None),
+        ("kWc en service", _f(tot["Puissance en service (kWc)"]),
+         f"{_f(tot['% puissance en service'])} % de {_f(tot['Puissance totale (kWc)'])} kWc"),
     ])
     st.dataframe(etat, width="stretch", hide_index=True,
                  column_config={**{c: st.column_config.NumberColumn(format="localized") for c in
-                                   ["Puissance totale (kWc)", "Puissance fonctionnelle (kWc)"]},
+                                   ["Puissance totale (kWc)", "Puissance en service (kWc)", "Puissance à l'arrêt (kWc)"]},
                                 **{c: st.column_config.ProgressColumn(c, format="%.1f %%", min_value=0, max_value=100)
-                                   for c in ["% centrales fonctionnelles", "% puissance fonctionnelle"]}})
+                                   for c in ["% centrales en service", "% puissance en service"]}})
     ph = etat[etat["Phase"] != "Total parc"]
     c1, c2 = st.columns(2)
     with c1:
         fig = go.Figure()
-        fig.add_bar(name="Fonctionnelles", x=ph["Phase"], y=ph["Fonctionnelles"], marker_color=NAVY)
+        fig.add_bar(name="H24", x=ph["Phase"], y=ph["Fonctionnelles (H24)"], marker_color=NAVY)
+        fig.add_bar(name="Partiel", x=ph["Phase"], y=ph["Fonctionnement partiel"], marker_color=BLUE)
         fig.add_bar(name="À l'arrêt", x=ph["Phase"], y=ph["À l'arrêt"], marker_color=GOLD)
+        fig.add_bar(name="Non renseigné", x=ph["Phase"], y=ph["Non renseigné"], marker_color="#C7CCD1")
         fig.update_layout(barmode="stack")
         fig = plotly_base_layout(fig, height=300)
         fig.update_layout(title="Centrales par phase et par état", legend=dict(orientation="h", y=-0.3))
         st.plotly_chart(fig, width="stretch")
     with c2:
         fig = go.Figure()
-        fig.add_bar(name="Fonctionnelle", x=ph["Phase"], y=ph["Puissance fonctionnelle (kWc)"], marker_color=NAVY)
-        fig.add_bar(name="À l'arrêt", x=ph["Phase"], y=ph["Puissance totale (kWc)"] - ph["Puissance fonctionnelle (kWc)"],
-                    marker_color=GOLD)
+        fig.add_bar(name="En service", x=ph["Phase"], y=ph["Puissance en service (kWc)"], marker_color=NAVY)
+        fig.add_bar(name="À l'arrêt", x=ph["Phase"], y=ph["Puissance à l'arrêt (kWc)"], marker_color=GOLD)
+        fig.add_bar(name="Non renseigné", x=ph["Phase"], y=ph["Puissance totale (kWc)"] - ph["Puissance en service (kWc)"]
+                    - ph["Puissance à l'arrêt (kWc)"], marker_color="#C7CCD1")
         fig.update_layout(barmode="stack")
         fig = plotly_base_layout(fig, height=300)
         fig.update_layout(title="Puissance par phase (kWc)", separators=", ", legend=dict(orientation="h", y=-0.3))
         st.plotly_chart(fig, width="stretch")
-    st.caption("Une centrale est comptée à l'arrêt tant qu'une panne signalée n'a pas été clôturée par un dépannage. "
-               "Pour que ces chiffres reflètent la réalité dès le départ, déclare d'abord dans « Signaler un arrêt » "
-               "les centrales actuellement à l'arrêt (plusieurs sites peuvent être sélectionnés à la fois).")
+    st.caption("État issu du dernier journal de maintenance importé (Phases 1 et 2) ; « en service » = fonctionnement H24 "
+               "ou partiel (plages horaires réduites). Une panne saisie dans l'application et non clôturée prime : la centrale "
+               "est comptée à l'arrêt. Les centrales de Phase 3, absentes des journaux, restent « non renseignées » tant "
+               "qu'aucun état n'est importé ou saisi.")
 
     section_title("SUIVI DE LA MAINTENANCE")
     n = st.session_state.get("_mt_n", 0)
@@ -107,8 +115,13 @@ if ref_sites is not None:
         return {"site_id": sid, "site": r["Nom du site"], "phase": r["Phase"], "antenne": r["Antenne proposée"],
                 "puissance_kwc": float(r["Puissance (kWc)"])}
 
-    t_sig, t_clo, t_vis, t_stat, t_hist = st.tabs(["🚨 Signaler un arrêt", "🔧 Clôturer un dépannage",
-                                                   "📋 Enregistrer une visite", "📊 Statistiques", "🗂️ Historique"])
+    t_gmao, t_sig, t_clo, t_vis, t_stat, t_hist, t_imp = st.tabs([
+        "🛠️ Tableau de bord GMAO", "🚨 Signaler un arrêt", "🔧 Clôturer un dépannage", "📋 Enregistrer une visite",
+        "📊 Saisies de l'application", "🗂️ Historique des saisies", "📥 Journaux de maintenance"])
+    with t_gmao:
+        gmao_ui.tableau_de_bord(reg, ref_sites)
+    with t_imp:
+        gmao_ui.ecran_import()
 
     # ------------------------------------------------------------ signaler
     with t_sig:
