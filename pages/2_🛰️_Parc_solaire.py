@@ -90,7 +90,7 @@ if ref_sites is not None:
              ("BI non affectés", str(k["non_affectes"]), None),
              ("Centrales à l'arrêt déclarées (BI)", str(len(arrets_bi)), None)])
     try:
-        st.page_link(PAGE_GMAO, label="Ouvrir la GMAO : demandes et bons d'intervention, arborescence, préventif, "
+        st.page_link(PAGE_GMAO, label="Ouvrir la GMAO : demandes et bons d'intervention, parc solaire en exploitation, préventif, "
                      "stocks, achats, budgets, ressources, analyses, mode terrain", icon="🔧")
     except Exception:  # noqa: BLE001 — lien indisponible hors navigation multipage
         st.info("🔧 Le détail de la maintenance est dans la page « GMAO Maintenance » du menu.")
@@ -103,7 +103,7 @@ det = data.antennes_detail
 if det is not None and not det.empty:
     kpi_row([
         ("Sites totaux", f"{int(det['Nb sites'].sum()):,}".replace(",", " "), None),
-        ("Puissance totale (kWc)", f"{det['Puissance totale (kWc)'].sum():,.1f}".replace(",", " "), None),
+        ("Puissance totale (kWc)", f"{det['Puissance totale (kWc)'].sum():,.1f}".replace(",", " ").replace(".", ","), None),
         ("Effectif recommandé", f"{int(det['Effectif total'].sum()):,}", None),
         ("Antennes", str(len(det)), None),
     ])

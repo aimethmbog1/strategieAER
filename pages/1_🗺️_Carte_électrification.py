@@ -229,7 +229,7 @@ with st.expander("📏 Outil — mesurer la distance entre deux sites (à vol d'
         ra = sites_all[sites_all["Nom du site"] == site_a].iloc[0]
         rb = sites_all[sites_all["Nom du site"] == site_b].iloc[0]
         d = haversine_km(ra["Latitude (N)"], ra["Longitude (E)"], rb["Latitude (N)"], rb["Longitude (E)"])
-        st.success(f"**{site_a}** ↔ **{site_b}** : **{d:.1f} km** à vol d'oiseau "
+        st.success(f"**{site_a}** ↔ **{site_b}** : **{str(round(d, 1)).replace('.', ',')} km** à vol d'oiseau "
                    f"({ra['Antenne proposée']} → {rb['Antenne proposée']}).")
         fig.add_trace(go.Scattermap(
             lat=[ra["Latitude (N)"], rb["Latitude (N)"]], lon=[ra["Longitude (E)"], rb["Longitude (E)"]],

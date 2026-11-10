@@ -23,7 +23,7 @@ if data is None or data.sites is None or data.sites.empty:
 # ----------------------------------------------------------------------------- style des tuiles
 TUILES = [  # (clé module, libellé, icône, couleur)
     ("di", "Créer une DI", "🚨", "#C0392B"), ("bi", "Bons d'intervention", "🧾", "#E67E22"),
-    ("equipements", "Arborescence", "🌳", "#27AE60"), ("planning", "Préventif & planning", "🗓️", "#2E86C1"),
+    ("equipements", "Parc solaire en exploitation", "☀️", "#27AE60"), ("planning", "Préventif & planning", "🗓️", "#2E86C1"),
     ("stocks", "Stocks", "📦", "#8E44AD"), ("achats", "Achats", "🛒", "#16A085"),
     ("budgets", "Budgets", "💰", "#D4AC0D"), ("ressources", "Ressources", "👷", "#5D6D7E"),
     ("analyses", "Analyses", "📊", "#1F3A5F"), ("terrain", "Mode terrain", "📱", "#117A65"),
@@ -35,7 +35,7 @@ css += (".gm-compteur{border-radius:8px;padding:10px 4px;text-align:center;color
         ".gm-compteur b{display:block;font-size:1.6rem}")
 st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
-MODULES = {"accueil": "🏠 Accueil", "equipements": "🌳 Équipements", "di": "🚨 Demandes (DI)",
+MODULES = {"accueil": "🏠 Accueil", "equipements": "☀️ Parc solaire en exploitation", "di": "🚨 Demandes (DI)",
            "bi": "🧾 Bons d'intervention (BI)", "planning": "🗓️ Préventif & planning", "stocks": "📦 Stocks",
            "achats": "🛒 Achats", "ressources": "👷 Ressources", "budgets": "💰 Budgets", "analyses": "📊 Analyses",
            "terrain": "📱 Mode terrain", "parametres": "⚙️ Paramètres & imports"}
@@ -134,7 +134,7 @@ st.title("🔧 GMAO — Maintenance des centrales")
 # ============================================================================= ACCUEIL
 def accueil():
     st.caption("Gestion de la maintenance assistée par ordinateur du parc solaire : demandes et bons d'intervention, "
-               "arborescence des équipements, préventif, stocks, achats, budgets, ressources et analyses. Toutes les "
+               "parc solaire en exploitation, préventif, stocks, achats, budgets, ressources et analyses. Toutes les "
                "saisies sont enregistrées dans la base de données.")
     section_title("MES MENUS")
     for ligne in (TUILES[:5], TUILES[5:]):
@@ -406,7 +406,7 @@ def module_equipements():
     quantification(v, reg)
     col_a, col_b = st.columns([2, 3])
     with col_a:
-        st.markdown("**Arborescence**")
+        st.markdown("**Centrales par région et par phase**")
         for rg, grp in v.groupby("Région"):
             with st.expander(f"{rg} ({len(grp)})", expanded=(reg != "Toutes")):
                 for p, gp in grp.groupby("Phase"):
@@ -482,7 +482,7 @@ def fiche_site(sid, classe):
     stat = gj.statuts_courants(tables_j.get("statuts"))
     st_row = stat[stat["cle_site"] == gj.cle(s["Nom du site"])] if not stat.empty else pd.DataFrame()
     st.markdown(f"### {ICONES.get(classe, '⚪')} {s['Nom du site']}")
-    st.caption(f"{s['Phase']} · {s['Région']} · {s.get('Département', '')} · {s['Puissance (kWc)']:.1f} kWc · antenne "
+    st.caption(f"{s['Phase']} · {s['Région']} · {s.get('Département', '')} · {str(round(s['Puissance (kWc)'], 1)).replace('.', ',')} kWc · antenne "
                f"{s['Antenne proposée']} · état : {classe}"
                + (f" · cause : {st_row['causes'].iloc[0]}" if len(st_row) and pd.notna(st_row['causes'].iloc[0]) else ""))
     bis = bi[bi["site_id"] == sid]

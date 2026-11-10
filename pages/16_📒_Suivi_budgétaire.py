@@ -81,8 +81,8 @@ for c in MONTANTS:
 prevu, engage, paye = (v[c].sum() for c in MONTANTS)
 kpi_row([
     ("Prévu", _fcfa(prevu), None),
-    ("Engagé", _fcfa(engage), f"{engage / prevu:.1%} du prévu" if prevu else None),
-    ("Payé", _fcfa(paye), f"{paye / prevu:.1%} du prévu" if prevu else None),
+    ("Engagé", _fcfa(engage), f"{engage / prevu:.1%} du prévu".replace(".", ",") if prevu else None),
+    ("Payé", _fcfa(paye), f"{paye / prevu:.1%} du prévu".replace(".", ",") if prevu else None),
     ("Disponible (prévu − engagé)", _fcfa(prevu - engage), None),
     ("Tâches avec réalisation renseignée", f"{(v['Réalisé'].astype(str).str.strip() != '').sum()} / {len(v)}", None),
 ])
