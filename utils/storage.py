@@ -49,6 +49,7 @@ REGISTRES = {
     "recharges_datacenter": "Recharges Data Center — données mensuelles",
     "classeur_principal": "Classeur de données principal (parc solaire, équipes)",
     "compteurs_lots": "Statistiques compteurs — lots Holley déposés",
+    "parametres_pages": "Réglages des pages (seuils, phases, objectifs, options, corrections)",
 }
 
 

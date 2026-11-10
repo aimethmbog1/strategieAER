@@ -473,6 +473,15 @@ def locality_cleanup_ui(df: pd.DataFrame) -> pd.DataFrame:
     sites_ref = load_official_sites()
     noms_officiels = sites_ref["nom"].tolist() if not sites_ref.empty else None
     suggestion, source = suggest_locality_groups(df["localite_brute"].tolist(), sites_officiels=noms_officiels)
+    # Corrections déjà validées et enregistrées dans la base (lues une fois par session)
+    from .parametres import memoriser, valeur
+    if "_cpt_corrections_enr" not in st.session_state:
+        st.session_state["_cpt_corrections_enr"] = valeur("compteurs", "corrections_localites", {}) or {}
+    enr = st.session_state["_cpt_corrections_enr"]
+    auto = dict(suggestion)  # propositions automatiques, avant application des corrections enregistrées
+    for brute, retenue in enr.items():
+        if brute in comptes.index:
+            suggestion[brute], source[brute] = retenue, "Correction enregistrée"
     table_initiale = pd.DataFrame({
         "Localité (brute)": comptes.index,
         "Occurrences": comptes.values,
@@ -495,6 +504,12 @@ def locality_cleanup_ui(df: pd.DataFrame) -> pd.DataFrame:
             height=min(60 + 36 * len(table_initiale), 400),
         )
     mapping = dict(zip(edite["Localité (brute)"], edite["Localité retenue"]))
+    # On enregistre les corrections validées pour ces localités (fusionnées avec celles des autres lots)
+    # (seules les corrections qui diffèrent de la proposition automatique sont gardées)
+    tout = {k: v for k, v in enr.items() if k not in mapping}
+    tout.update({k: str(v) for k, v in mapping.items()
+                 if pd.notna(v) and str(v).strip() and str(v) != str(auto.get(k, k))})
+    memoriser("compteurs", "corrections_localites", dict(sorted(tout.items())))
     return apply_locality_mapping(df, mapping)
 
 
