@@ -55,6 +55,15 @@ REGISTRES = {
     "gmao_statuts": "GMAO — état de fonctionnement des centrales",
     "gmao_inspections": "GMAO — inspections",
     "gmao_affectations": "GMAO — affectation site / zone / responsable",
+    "gmao_di": "GMAO — demandes d'intervention (DI)",
+    "gmao_bi": "GMAO — bons d'intervention (BI)",
+    "gmao_plans": "GMAO — gammes de maintenance préventive",
+    "gmao_articles": "GMAO — catalogue des articles / pièces",
+    "gmao_mouvements": "GMAO — mouvements de stock",
+    "gmao_achats": "GMAO — demandes et commandes d'achat",
+    "gmao_budget": "GMAO — budget de maintenance",
+    "gmao_prestataires": "GMAO — prestataires",
+    "gmao_equipements": "GMAO — équipements par centrale",
 }
 
 
