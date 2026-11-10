@@ -13,6 +13,7 @@ from utils.auth import ROLES_PAIE, require_role
 from utils.storage import enregistrer_si_change, session_ou_stockage
 from utils.ui import PAGE_ICON, inject_base_style, section_title, plotly_base_layout, kpi_row, render_sidebar_footer
 
+from utils.parametres import memoriser, valeur
 st.set_page_config(page_title="Masse salariale — AER", page_icon=PAGE_ICON, layout="wide")
 inject_base_style()
 require_role(ROLES_PAIE, "la masse salariale (données nominatives de paie)")
@@ -100,6 +101,10 @@ with tab_param:
     st.caption("Ces réglages s'appliquent à toute la session ; les valeurs par défaut viennent de "
                "data/parametres_paie_aer.json. Les points marqués « à valider » relèvent de la DRH, de la DGI ou de la CNPS.")
     O = P["OPTIONS"]
+    if not st.session_state.get("_paie_reglages_charges"):  # une fois par session : réglages enregistrés
+        O.update(valeur("paie", "options", {}) or {})
+        P["PATRONAL"]["at"] = float(valeur("paie", "taux_at", P["PATRONAL"]["at"]))
+        st.session_state["_paie_reglages_charges"] = True
     modes = ["Forfait palier", "Plafond", "Plus favorable"]
     c1, c2 = st.columns(2)
     with c1:
@@ -118,8 +123,14 @@ with tab_param:
                                       horizontal=True, key="opt_base13")
         P["PATRONAL"]["at"] = st.number_input("Taux patronal accidents du travail (à valider)", 0.0, 0.10,
                                               float(P["PATRONAL"]["at"]), 0.0025, format="%.4f", key="opt_at")
+    memoriser("paie", "options", dict(O))
+    memoriser("paie", "taux_at", float(P["PATRONAL"]["at"]))
+    st.caption("💾 Ces réglages sont enregistrés dans la base et s'appliquent à tous les utilisateurs.")
     if st.button("↺ Revenir aux paramètres par défaut"):
         reinitialiser_parametres()
+        P0 = parametres_session()
+        memoriser("paie", "options", dict(P0["OPTIONS"]))
+        memoriser("paie", "taux_at", float(P0["PATRONAL"]["at"]))
         for k in list(st.session_state):
             if k.startswith("opt_"):
                 st.session_state.pop(k)
@@ -301,9 +312,11 @@ with tab_proj:
         st.warning("Renseignez d'abord le registre de paie.")
     else:
         c1, c2, c3, c4 = st.columns(4)
-        an0 = c1.number_input("Premier exercice", 2025, 2040, max(2027, pd.Timestamp.today().year + 1), step=1)
-        reval = c2.number_input("Revalorisation annuelle de la grille (%)", 0.0, 20.0, 0.0, 0.5) / 100
-        attr = c3.number_input("Départs non remplacés par an (%)", 0.0, 30.0, 0.0, 0.5) / 100
+        pj = valeur("paie", "projection", {})
+        an0 = c1.number_input("Premier exercice", 2025, 2040, int(pj.get("an0", max(2027, pd.Timestamp.today().year + 1))), step=1)
+        reval = c2.number_input("Revalorisation annuelle de la grille (%)", 0.0, 20.0, float(pj.get("reval", 0.0)), 0.5) / 100
+        attr = c3.number_input("Départs non remplacés par an (%)", 0.0, 30.0, float(pj.get("attr", 0.0)), 0.5) / 100
+        memoriser("paie", "projection", {"an0": int(an0), "reval": round(reval * 100, 2), "attr": round(attr * 100, 2)})
         avance = c4.checkbox("Avancement d'échelon de droit (art. 10)", value=True,
                              help="Approximation : la moitié des agents avance d'un échelon en N+1, tous en N+2 (G maximum).")
         avec_recr = st.checkbox("Ajouter les recrutements simulés (onglet Simulation de recrutement)", value=True)

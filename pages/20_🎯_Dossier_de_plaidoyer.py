@@ -10,6 +10,7 @@ from utils.plaidoyer import (
 from utils.storage import enregistrer_si_change, session_ou_stockage
 from utils.ui import PAGE_ICON, inject_base_style, section_title, render_sidebar_footer
 
+from utils.parametres import memoriser, valeur
 st.set_page_config(page_title="Dossier de plaidoyer — AER", page_icon=PAGE_ICON, layout="wide")
 inject_base_style()
 data = get_data()
@@ -23,11 +24,17 @@ st.caption("Assemble un dossier institutionnel en français et en anglais à par
 
 # ----------------------------------------------------------- destinataire
 c1, c2 = st.columns([1, 2])
-audience = c1.selectbox("Destinataire", list(AUDIENCES))
+_aud = list(AUDIENCES)
+audience = c1.selectbox("Destinataire", _aud, index=_aud.index(valeur("plaidoyer", "audience", _aud[0]))
+                        if valeur("plaidoyer", "audience", _aud[0]) in _aud else 0)
 titre_def = {"Partenaires techniques et financiers": "Électrification rurale par centrales solaires — Cameroun"}.get(
     audience, "Électrification rurale par centrales solaires — bilan et perspectives")
-titre_fr = c2.text_input("Titre (français)", titre_def)
-titre_en = c2.text_input("Title (English)", "Rural electrification through solar mini-grids — Cameroon: results and outlook")
+titre_fr = c2.text_input("Titre (français)", valeur("plaidoyer", f"titre_fr_{audience}", titre_def))
+titre_en = c2.text_input("Title (English)", valeur("plaidoyer", f"titre_en_{audience}",
+                         "Rural electrification through solar mini-grids — Cameroon: results and outlook"))
+memoriser("plaidoyer", "audience", audience)
+memoriser("plaidoyer", f"titre_fr_{audience}", titre_fr)
+memoriser("plaidoyer", f"titre_en_{audience}", titre_en)
 
 # ----------------------------------------------------------- références validées
 section_title("1. RÉFÉRENCES VALIDÉES (chiffres institutionnels)")
@@ -56,12 +63,16 @@ enregistrer_si_change("plaidoyer_references", refs)
 section_title("2. INDICATEURS RETENUS")
 inclure_paie = False
 if peut_voir_paie():
-    inclure_paie = st.checkbox("Inclure les indicateurs de masse salariale (données de paie)", value=False,
+    inclure_paie = st.checkbox("Inclure les indicateurs de masse salariale (données de paie)",
+                               value=bool(valeur("plaidoyer", "inclure_paie", False)),
                                help="Désactivé par défaut : la paie est une donnée sensible, à n'inclure que pour les "
                                     "destinataires concernés.")
+memoriser("plaidoyer", "inclure_paie", bool(inclure_paie))
 ind = indicateurs(data, inclure_paie, refs)
+_exclus = set(valeur("plaidoyer", "indicateurs_exclus", []))  # on mémorise les exclusions : les nouveaux indicateurs restent inclus
 retenus = st.multiselect("Indicateurs à faire figurer dans le dossier", ind["Indicateur"].tolist(),
-                         default=ind["Indicateur"].tolist())
+                         default=[i for i in ind["Indicateur"].tolist() if i not in _exclus])
+memoriser("plaidoyer", "indicateurs_exclus", sorted(set(ind["Indicateur"]) - set(retenus)))
 ind = ind[ind["Indicateur"].isin(retenus)]
 from utils.plaidoyer import _fmt
 aff = ind.copy()

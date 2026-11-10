@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from utils.storage import charger_fichiers, enregistrer_fichiers
+from utils.parametres import memoriser, valeur
 from utils.ui import inject_base_style, BarreChargement  # thème de l'application + contrôle d'accès
 from utils.theme_compteurs import (
     PAGE_ICON, APP_TITLE, NAVY, BLUE, GOLD, GREY, CATEGORICAL, BG_SURFACE,
@@ -164,10 +165,17 @@ if uploaded_files:
         if all(est_format_holley(l["df"]) for l in lus):
             st.sidebar.markdown("**Période de chaque lot** (détectée depuis le nom du fichier — à corriger si besoin)")
             fichiers_avec_periode = []
+            periodes_enr = valeur("compteurs", "periodes", {}) or {}
             for l in lus:
                 devinee = parse_date_from_filename(l["nom"], jour_mois_annee) or date.today()
-                choisie = st.sidebar.date_input(l["nom"], value=devinee, key=f"cpt_periode_{l['nom']}")
+                enr = periodes_enr.get(l["nom"])
+                choisie = st.sidebar.date_input(l["nom"], value=date.fromisoformat(enr) if enr else devinee,
+                                                key=f"cpt_periode_{l['nom']}")
                 fichiers_avec_periode.append({"nom": l["nom"], "df": l["df"], "periode": choisie})
+            # seules les périodes corrigées à la main sont mémorisées (les autres se déduisent du nom du fichier)
+            corrigees = {f["nom"]: f["periode"].isoformat() for f in fichiers_avec_periode
+                         if f["periode"] != (parse_date_from_filename(f["nom"], jour_mois_annee) or date.today())}
+            memoriser("compteurs", "periodes", corrigees)
             df_brut = build_from_holley_files(fichiers_avec_periode)
             st.sidebar.success(f"{len(df_brut)} lignes chargées depuis {len(lus)} fichier(s) — format Holley détecté.")
         elif len(lus) == 1:
@@ -234,7 +242,8 @@ if df.empty:
 # =============================================================================
 st.sidebar.markdown("### 🏗️ Phases du projet")
 if "cpt_phases_df" not in st.session_state:
-    st.session_state["cpt_phases_df"] = default_phases(df)
+    _ph = valeur("compteurs", "phases")
+    st.session_state["cpt_phases_df"] = _ph if isinstance(_ph, pd.DataFrame) and not _ph.empty else default_phases(df)
 with st.sidebar.expander("Définir les phases (dates éditables)", expanded=False):
     st.caption(
         "Chaque compteur est classé dans la phase dont la plage de dates couvre sa période "
@@ -251,6 +260,7 @@ with st.sidebar.expander("Définir les phases (dates éditables)", expanded=Fals
         key="cpt_phases_editor",
     )
     st.session_state["cpt_phases_df"] = phases_editees
+    memoriser("compteurs", "phases", phases_editees)
     st.caption(
         "Convention communiquée par l'utilisateur, prioritaire sur les dates ci-dessus : un numéro de "
         "série (SN) commençant par **251** → Phase 1, **241** → Phase 2, **5** → Phase 3 (ordre des lignes "
@@ -268,7 +278,14 @@ cache_dataframe(df)  # résumé repris dans l'onglet « Statistiques compteurs �
 noms_phases_actuelles = [str(p).strip() for p in phases_editees["Phase"].tolist() if pd.notna(p) and str(p).strip()]
 st.sidebar.markdown("### 🎯 Objectifs du projet")
 if "cpt_targets_df" not in st.session_state:
-    st.session_state["cpt_targets_df"] = default_targets(noms_phases_actuelles)
+    _ob = valeur("compteurs", "objectifs")
+    if isinstance(_ob, pd.DataFrame) and not _ob.empty:
+        _ob = pd.concat([_ob[_ob["Phase"].isin(noms_phases_actuelles)],
+                         default_targets([n for n in noms_phases_actuelles if n not in _ob["Phase"].tolist()])],
+                        ignore_index=True)
+        st.session_state["cpt_targets_df"] = _ob
+    else:
+        st.session_state["cpt_targets_df"] = default_targets(noms_phases_actuelles)
 else:
     existant = st.session_state["cpt_targets_df"]
     deja_connus = existant["Phase"].tolist()
@@ -292,6 +309,7 @@ with st.sidebar.expander("Définir les objectifs (cibles éditables)", expanded=
         key="cpt_targets_editor",
     )
     st.session_state["cpt_targets_df"] = targets_editees
+    memoriser("compteurs", "objectifs", targets_editees)
 
 sites_ref = load_official_sites()
 puissances_ref = load_puissances_sites()

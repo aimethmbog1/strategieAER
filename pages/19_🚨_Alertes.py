@@ -6,6 +6,7 @@ from utils.data import RED, AMBER, BLUE, GREY
 from utils.loader import get_data
 from utils.ui import PAGE_ICON, inject_base_style, section_title, kpi_row, render_sidebar_footer, style_map
 
+from utils.parametres import memoriser, valeur
 st.set_page_config(page_title="Alertes — AER", page_icon=PAGE_ICON, layout="wide")
 inject_base_style()
 data = get_data()
@@ -19,14 +20,17 @@ st.caption("Points nécessitant une action, détectés automatiquement dans les 
 
 with st.expander("⚙️ Seuils"):
     c = st.columns(6)
+    sv = valeur("alertes", "seuils", {})
     seuils = {
-        "projet_jours": c[0].number_input("Projet sans mouvement (jours)", 7, 365, 60),
-        "vidange_mois": c[1].number_input("Intervalle de vidange (mois)", 1, 24, 6),
-        "age_reforme": c[2].number_input("Âge de réforme (ans)", 3, 20, 7),
-        "essai_jours": c[3].number_input("Fin d'essai à venir (jours)", 7, 120, 30),
-        "silence_jours": c[4].number_input("Centrale silencieuse (jours)", 1, 30, 2),
-        "fraicheur_jours": c[5].number_input("Données sources anciennes (jours)", 7, 365, 60),
+        "projet_jours": c[0].number_input("Projet sans mouvement (jours)", 7, 365, int(sv.get("projet_jours", 60))),
+        "vidange_mois": c[1].number_input("Intervalle de vidange (mois)", 1, 24, int(sv.get("vidange_mois", 6))),
+        "age_reforme": c[2].number_input("Âge de réforme (ans)", 3, 20, int(sv.get("age_reforme", 7))),
+        "essai_jours": c[3].number_input("Fin d'essai à venir (jours)", 7, 120, int(sv.get("essai_jours", 30))),
+        "silence_jours": c[4].number_input("Centrale silencieuse (jours)", 1, 30, int(sv.get("silence_jours", 2))),
+        "fraicheur_jours": c[5].number_input("Données sources anciennes (jours)", 7, 365, int(sv.get("fraicheur_jours", 60))),
     }
+    memoriser("alertes", "seuils", seuils)
+    st.caption("💾 Seuils enregistrés dans la base : ils s'appliquent à tous les utilisateurs.")
 
 al = calculer_alertes(data, seuils)
 kpi_row([(g, str(int((al["Gravité"] == g).sum())) if not al.empty else "0", None) for g in GRAVITES])

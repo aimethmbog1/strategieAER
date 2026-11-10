@@ -9,6 +9,7 @@ from utils.loader import get_data
 from utils.storage import mettre_a_jour, session_ou_stockage
 from utils.ui import PAGE_ICON, inject_base_style, section_title, plotly_base_layout, kpi_row, render_sidebar_footer, style_map
 
+from utils.parametres import memoriser, valeur
 st.set_page_config(page_title="Supervision des centrales — AER", page_icon=PAGE_ICON, layout="wide")
 inject_base_style()
 data = get_data()
@@ -91,8 +92,12 @@ mes["Date"] = pd.to_datetime(mes["Date"])
 c1, c2, c3 = st.columns(3)
 dmin, dmax = mes["Date"].min().date(), mes["Date"].max().date()
 periode = c1.date_input("Période analysée", (dmin, dmax), min_value=dmin, max_value=dmax, format="DD/MM/YYYY")
-ref_mode = c2.radio("Date de référence pour le silence", ["Dernière date des données", "Aujourd'hui"], horizontal=True)
-seuil = c3.number_input("Centrale silencieuse au-delà de (jours sans données)", 1, 90, 2)
+_modes = ["Dernière date des données", "Aujourd'hui"]
+ref_mode = c2.radio("Date de référence pour le silence", _modes, horizontal=True,
+                    index=_modes.index(valeur("supervision", "ref_mode", _modes[0])) if valeur("supervision", "ref_mode", _modes[0]) in _modes else 0)
+seuil = c3.number_input("Centrale silencieuse au-delà de (jours sans données)", 1, 90, int(valeur("supervision", "seuil", 2)))
+memoriser("supervision", "ref_mode", ref_mode)
+memoriser("supervision", "seuil", int(seuil))
 d0, d1 = (pd.Timestamp(periode[0]), pd.Timestamp(periode[1])) if isinstance(periode, tuple) and len(periode) == 2 \
     else (pd.Timestamp(dmin), pd.Timestamp(dmax))
 v = mes[(mes["Date"] >= d0) & (mes["Date"] <= d1)]

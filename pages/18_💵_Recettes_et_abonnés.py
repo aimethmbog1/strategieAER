@@ -9,6 +9,7 @@ from utils.loader import get_data
 from utils.storage import mettre_a_jour, session_ou_stockage
 from utils.ui import PAGE_ICON, inject_base_style, section_title, plotly_base_layout, kpi_row, render_sidebar_footer, gauge_indicator
 
+from utils.parametres import memoriser, valeur
 st.set_page_config(page_title="Recettes et abonnés — AER", page_icon=PAGE_ICON, layout="wide")
 inject_base_style()
 data = get_data()
@@ -75,11 +76,15 @@ with st.expander("📥 Importer des états de vente", expanded=ventes.empty):
 
 section_title("RÉFÉRENCES POUR LES TAUX")
 c1, c2, c3 = st.columns(3)
-parc = c1.number_input("Compteurs installés (parc de référence)", 0, 1_000_000, 8600, step=100,
+parc = c1.number_input("Compteurs installés (parc de référence)", 0, 1_000_000, int(valeur("recettes", "parc", 8600)), step=100,
                        help="Valeur validée 2026 : 8 600 (Phases I à III) — à actualiser")
-potentiel = c2.number_input("Potentiel de ménages desservables", 0, 10_000_000, 59516, step=100,
+potentiel = c2.number_input("Potentiel de ménages desservables", 0, 10_000_000, int(valeur("recettes", "potentiel", 59516)), step=100,
                             help="Valeur validée : 59 516 — à actualiser")
-fenetre = c3.number_input("Compteur actif = au moins un achat dans les N derniers jours", 7, 365, 90)
+fenetre = c3.number_input("Compteur actif = au moins un achat dans les N derniers jours", 7, 365,
+                          int(valeur("recettes", "fenetre", 90)))
+memoriser("recettes", "parc", int(parc))
+memoriser("recettes", "potentiel", int(potentiel))
+memoriser("recettes", "fenetre", int(fenetre))
 
 if ventes.empty:
     st.info("Aucune vente enregistrée : importez un état de vente pour calculer les indicateurs.")
