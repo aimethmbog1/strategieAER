@@ -50,6 +50,7 @@ REGISTRES = {
     "classeur_principal": "Classeur de données principal (parc solaire, équipes)",
     "compteurs_lots": "Statistiques compteurs — lots Holley déposés",
     "parametres_pages": "Réglages des pages (seuils, phases, objectifs, options, corrections)",
+    "maintenance_interventions": "Parc solaire — maintenance (arrêts, dépannages, visites)",
 }
 
 
