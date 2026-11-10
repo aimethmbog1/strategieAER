@@ -46,6 +46,7 @@ REGISTRES = {
     "ventes_register": "Recettes — ventes importées",
     "plaidoyer_textes": "Dossier de plaidoyer — textes",
     "plaidoyer_references": "Dossier de plaidoyer — références validées",
+    "recharges_datacenter": "Recharges Data Center — données mensuelles",
 }
 
 
