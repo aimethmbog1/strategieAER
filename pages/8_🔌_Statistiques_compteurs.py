@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from utils.storage import charger_fichiers, enregistrer_fichiers
 from utils.ui import inject_base_style, BarreChargement  # thème de l'application + contrôle d'accès
 from utils.theme_compteurs import (
     PAGE_ICON, APP_TITLE, NAVY, BLUE, GOLD, GREY, CATEGORICAL, BG_SURFACE,
@@ -90,11 +91,52 @@ jour_mois_annee = st.sidebar.toggle(
     help="Le nom de chaque fichier doit contenir une date (ex. 01-10-2024.xls), qui sert de période "
          "d'installation pour toutes ses lignes. Désactive si tes fichiers sont nommés MM-JJ-AAAA.",
 )
-uploaded_files = st.sidebar.file_uploader(
-    "Fichiers Excel des abonnés installés", type=["xlsx", "xls"], accept_multiple_files=True, key="cpt_upload",
+depots = st.sidebar.file_uploader(
+    "Fichiers Excel des abonnés installés", type=["xlsx", "xls"], accept_multiple_files=True,
+    key=f"cpt_upload_{st.session_state.get('_cpt_up_n', 0)}",
     help="Dépose un ou plusieurs fichiers — le format export Holley (colonnes Full Address / Template Code) "
-         "est reconnu automatiquement.",
+         "est reconnu automatiquement. Chaque fichier déposé est enregistré dans la base de données : il reste "
+         "disponible pour tous les utilisateurs aux visites suivantes. Un fichier de même nom remplace l'ancien.",
 )
+
+
+class _Lot:
+    """Fichier de compteurs, qu'il vienne d'un dépôt ou de la base (même interface que l'objet de dépôt)."""
+
+    def __init__(self, name: str, contenu: bytes):
+        self.name, self._contenu, self.size = name, contenu, len(contenu)
+
+    def getvalue(self) -> bytes:
+        return self._contenu
+
+
+# Lots enregistrés dans la base (une lecture par session, puis tenus à jour en mémoire)
+if "_cpt_lots" not in st.session_state:
+    st.session_state["_cpt_lots"] = {f["fichier"]: f["contenu"] for f in charger_fichiers("compteurs_lots")}
+lots = st.session_state["_cpt_lots"]
+nouveaux = [uf for uf in (depots or []) if lots.get(uf.name) is None or len(lots[uf.name]) != uf.size]
+if nouveaux:
+    for uf in nouveaux:
+        lots[uf.name] = uf.getvalue()
+    if enregistrer_fichiers("compteurs_lots", [{"fichier": k, "contenu": v} for k, v in sorted(lots.items())],
+                            f"{len(nouveaux)} lot(s) ajouté(s) ou remplacé(s) : " + ", ".join(u.name for u in nouveaux)):
+        st.toast(f"{len(nouveaux)} fichier(s) enregistré(s) dans la base de données", icon="💾")
+    else:
+        st.sidebar.warning("Fichiers lus pour cette session, mais non enregistrés dans la base "
+                           "(profil en consultation seule ou base indisponible).")
+if lots:
+    with st.sidebar.expander(f"💾 Lots enregistrés dans la base ({len(lots)})"):
+        a_retirer = st.multiselect("Retirer des lots", sorted(lots), key="cpt_retirer",
+                                   help="Pour supprimer un fichier déposé par erreur ou en double.")
+        if a_retirer and st.button(f"Retirer {len(a_retirer)} lot(s)", key="cpt_retirer_btn"):
+            for k in a_retirer:
+                lots.pop(k, None)
+            enregistrer_fichiers("compteurs_lots", [{"fichier": k, "contenu": v} for k, v in sorted(lots.items())],
+                                 "lots retirés : " + ", ".join(a_retirer))
+            st.session_state.pop("_cpt_signature", None)
+            st.session_state["_cpt_up_n"] = st.session_state.get("_cpt_up_n", 0) + 1  # vide la zone de dépôt
+            st.rerun()
+uploaded_files = [_Lot(k, v) for k, v in sorted(lots.items())]
 
 df = None
 barre = None

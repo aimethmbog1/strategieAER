@@ -75,13 +75,17 @@ if fichier is not None:
 
 # Données intégrées à l'application : utilisées tant qu'aucun classeur plus récent n'a été déposé.
 FICHIER_INTEGRE = Path(__file__).resolve().parent.parent / "data" / "recharges_datacenter.xlsx"
-source = st.session_state.get("_recharges_source", "données enregistrées dans l'application")
+source = st.session_state.get("_recharges_source", "base de données")
 if (registre is None or registre.empty) and fichier is None and FICHIER_INTEGRE.exists():
     with BarreChargement("Chargement des données intégrées…", total=1) as barre:
         registre = lire_classeur_recharges(FICHIER_INTEGRE.read_bytes())[COLONNES_BASE]
         barre.etape("Données prêtes")
-    st.session_state["recharges_datacenter"] = registre
-    source = "données intégrées à l'application"
+    # Versées dans la base dès le premier affichage, pour que la base contienne l'historique complet.
+    if mettre_a_jour("recharges_datacenter", registre, "données intégrées à l'application (classeur de référence)"):
+        source = "données intégrées, enregistrées dans la base"
+    else:
+        st.session_state["recharges_datacenter"] = registre
+        source = "données intégrées à l'application"
 elif fichier is not None:
     source = f"classeur déposé : {fichier.name}"
 st.session_state["_recharges_source"] = source
