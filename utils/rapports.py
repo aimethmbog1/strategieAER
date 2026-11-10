@@ -125,11 +125,14 @@ def build_pdf_report(titre: str, sous_titre: str, genere_le: str,
         pdf.ln(4)
 
     for section in sections:
+        if section.get("nouvelle_page") and pdf.get_y() > pdf.t_margin + 15:
+            pdf.add_page()
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(31, 56, 100)
         pdf.cell(0, 8, _pdf_safe(section["titre"]), ln=True)
         if section.get("texte"):
-            pdf.set_font("Helvetica", "", 9)
+            taille = section.get("taille", 9)
+            pdf.set_font("Helvetica", "", taille)
             pdf.set_text_color(60, 60, 60)
             # new_x/new_y explicites : par défaut, multi_cell() laisse le curseur
             # en haut-droite de son propre bloc plutôt qu'en bas-gauche — sans ça,
@@ -137,7 +140,8 @@ def build_pdf_report(titre: str, sous_titre: str, genere_le: str,
             # droit de la page, superposé à la fin du texte qui vient d'être écrit
             # (bug constaté visuellement : un en-tête de tableau flottant, détaché
             # de ses propres colonnes).
-            pdf.multi_cell(0, 5, _pdf_safe(section["texte"]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(0, 5 if taille <= 9 else 5.6, _pdf_safe(section["texte"]), new_x=XPos.LMARGIN,
+                           new_y=YPos.NEXT, align="J" if taille > 9 else "L")
         if section.get("image_bytes"):
             tmp_path = None
             try:

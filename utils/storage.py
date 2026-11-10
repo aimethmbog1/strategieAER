@@ -47,6 +47,8 @@ REGISTRES = {
     "plaidoyer_textes": "Dossier de plaidoyer — textes",
     "plaidoyer_references": "Dossier de plaidoyer — références validées",
     "recharges_datacenter": "Recharges Data Center — données mensuelles",
+    "classeur_principal": "Classeur de données principal (parc solaire, équipes)",
+    "compteurs_lots": "Statistiques compteurs — lots Holley déposés",
 }
 
 
@@ -230,7 +232,8 @@ def sauvegarde_complete() -> bytes:
             s = _vers_json(df)
             morceaux = [s[i:i + 30000] for i in range(0, len(s), 30000)] or [""]
             pd.DataFrame({"json": morceaux}).to_excel(xw, sheet_name=nom[:31], index=False)
-            df.to_excel(xw, sheet_name=("v_" + nom)[:31], index=False)  # lecture humaine
+            lisible = df.drop(columns=["b64"]) if "b64" in df.columns else df  # contenu binaire : déjà dans la feuille JSON
+            lisible.to_excel(xw, sheet_name=("v_" + nom)[:31], index=False)  # lecture humaine
         pd.DataFrame(index, columns=["nom", "lignes"]).to_excel(xw, sheet_name="_index", index=False)
         lire_journal(100000).to_excel(xw, sheet_name="_journal", index=False)
     return buf.getvalue()
@@ -256,6 +259,31 @@ def restaurer(fichier) -> list[str]:
             st.session_state.pop(f"_empreinte_{nom}", None)
             faits.append(nom)
     return faits
+
+
+# ------------------------------------------------------------------ fichiers déposés (contenu binaire)
+# Un registre « fichiers » est un DataFrame : une ligne par fichier (nom, contenu en base64, date, auteur).
+def charger_fichiers(nom: str) -> list[dict]:
+    """Fichiers enregistrés sous `nom` : [{"fichier": str, "contenu": bytes, "maj": str}, …] (liste vide sinon)."""
+    import base64
+    df = charger(nom)
+    if df is None or df.empty or "b64" not in df.columns:
+        return []
+    return [{"fichier": str(r["fichier"]), "contenu": base64.b64decode(str(r["b64"])), "maj": str(r.get("maj", ""))}
+            for _, r in df.iterrows()]
+
+
+def enregistrer_fichiers(nom: str, fichiers: list[dict], detail: str = "") -> bool:
+    """Remplace le registre `nom` par la liste de fichiers donnée ({"fichier", "contenu"[, "maj"]})."""
+    import base64
+    from .auth import peut_modifier
+    if not peut_modifier():
+        return False
+    maj = datetime.now().isoformat(timespec="seconds")
+    df = pd.DataFrame([{"fichier": f["fichier"], "b64": base64.b64encode(f["contenu"]).decode("ascii"),
+                        "taille": len(f["contenu"]), "maj": f.get("maj") or maj} for f in fichiers],
+                      columns=["fichier", "b64", "taille", "maj"])
+    return enregistrer(nom, df, detail or f"{len(fichiers)} fichier(s)")
 
 
 # ------------------------------------------------------------------ aide aux registres de session

@@ -21,20 +21,38 @@ def get_data() -> AERData | None:
             "Charger un autre classeur (.xlsx)", type=["xlsx"], key="uploader_global"
         )
 
+    from .storage import charger_fichiers, enregistrer_fichiers
+
     if uploaded is not None:
         file_bytes = uploaded.getvalue()
+        nouveau = (uploaded.name, len(file_bytes)) != (st.session_state.get("file_name"), len(st.session_state.get("file_bytes", b"")))
         st.session_state["file_bytes"] = file_bytes
         st.session_state["file_name"] = uploaded.name
+        if nouveau:
+            # Classeur partagé : enregistré dans la base pour toutes les sessions et tous les utilisateurs.
+            if enregistrer_fichiers("classeur_principal", [{"fichier": uploaded.name, "contenu": file_bytes}],
+                                    f"classeur principal remplacé : {uploaded.name}"):
+                st.session_state["file_source"] = "enregistré dans la base"
+                st.toast(f"{uploaded.name} enregistré dans la base de données", icon="💾")
+            else:
+                st.session_state["file_source"] = "session uniquement (non enregistré)"
     elif "file_bytes" not in st.session_state:
-        if DEFAULT_PATH.exists():
+        enregistres = charger_fichiers("classeur_principal")
+        if enregistres:
+            st.session_state["file_bytes"] = enregistres[0]["contenu"]
+            st.session_state["file_name"] = enregistres[0]["fichier"]
+            st.session_state["file_source"] = f"base de données (déposé le {enregistres[0]['maj'][:10]})"
+        elif DEFAULT_PATH.exists():
             st.session_state["file_bytes"] = DEFAULT_PATH.read_bytes()
             st.session_state["file_name"] = DEFAULT_PATH.name
+            st.session_state["file_source"] = "classeur par défaut de l'application"
         else:
             st.sidebar.warning("Aucun fichier chargé pour le moment.")
             return None
 
     with st.sidebar:
-        st.caption(f"Fichier actif : **{st.session_state.get('file_name', '—')}**")
+        st.caption(f"Fichier actif : **{st.session_state.get('file_name', '—')}** — "
+                   f"{st.session_state.get('file_source', '')}")
 
     try:
         contenu = st.session_state["file_bytes"]

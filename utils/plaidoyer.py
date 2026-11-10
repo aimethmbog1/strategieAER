@@ -10,6 +10,7 @@ sa date et son statut (Validé / Calculé / Provisoire / À actualiser).
 from __future__ import annotations
 
 import io
+import re
 
 import pandas as pd
 
@@ -20,7 +21,8 @@ from .storage import charger
 _SEED_BUDGET = Path(__file__).resolve().parent.parent / "data" / "budget_sdmse_2027.csv"
 UNITES_EN = {"sites": "sites", "kWc": "kWp", "antennes": "branches", "agents": "staff", "équipes": "teams",
              "postes": "positions", "centrales": "mini-grids", "compteurs": "meters", "ménages": "households",
-             "abonnés": "customers", "kWh": "kWh", "FCFA": "XAF", "projets": "projects", "dossiers": "files", "%": "%"}
+             "abonnés": "customers", "kWh": "kWh", "FCFA": "XAF", "projets": "projects", "dossiers": "files", "%": "%",
+             "requêtes": "requests", "kWh/mois": "kWh/month"}
 
 
 def budget_registre() -> pd.DataFrame | None:
@@ -47,6 +49,13 @@ REFERENCES_DEFAUT = [
     ("Abonnés réels (2026, partiel)", "Actual subscribers (2026, partial)", 31790, "abonnés", "Rapport institutionnel 2026"),
     ("Énergie facturée cumulée", "Cumulative energy billed", 24990851, "kWh", "Data Center AER, cumul"),
     ("Recettes cumulées (Data Center)", "Cumulative revenue (Data Center)", 2499107194, "FCFA", "Data Center AER, cumul"),
+    ("Compteurs posés dans l'année", "Meters installed during the year", 3310, "compteurs",
+     "SDMSE — système de gestion des compteurs, au 09/11/2026 (Phase 1 : 120 · Phase 2 : 430 · Phase 3 : 2 760)"),
+    ("Disponibilité du Data Center", "Data Center availability", 98, "%", "SDMSE — supervision du Data Center, 2026"),
+    ("Requêtes traitées par le Data Center", "Requests processed by the Data Center", 300000, "requêtes",
+     "SDMSE — estimation 2026"),
+    ("Centrales raccordées à la supervision à distance", "Mini-grids connected to remote monitoring", 120, "centrales",
+     "SDMSE — cartes SIM NetEco / FusionSolar, 2026"),
 ]
 
 SECTIONS = [
@@ -57,7 +66,7 @@ SECTIONS = [
     ("demandes", "5. Recommandations et décisions attendues", "5. Recommendations and decisions sought"),
 ]
 
-TEXTES_DEFAUT = {
+TEXTES_ANCIENS = {
     "contexte": (
         "L'Agence d'Électrification Rurale met en œuvre le programme d'électrification rurale par centrales "
         "solaires photovoltaïques. Le parc suivi compte {sites} sites pour une puissance installée de {kwc} kWc, "
@@ -91,11 +100,60 @@ TEXTES_DEFAUT = {
 }
 
 
+# Textes types argumentés (au moins une page par partie dans le PDF) — voir utils/plaidoyer_textes.py
+from .plaidoyer_textes import TEXTES_DEFAUT  # noqa: E402
+
+
 def _fmt(x, dec=0) -> str:
     try:
         return f"{float(x):,.{dec}f}".replace(",", " ")
     except (TypeError, ValueError):
         return str(x)
+
+
+def _indicateurs_recharges(add) -> None:
+    """Recettes et consommation calculées à partir du classeur « Suivi des recharges » (registre de la page
+    Recharges Data Center, ou à défaut le classeur intégré à l'application)."""
+    try:
+        from .recharges import COLONNES_BASE, MOIS_LONGS, enrichir, lire_classeur_recharges, mois_complets
+        rc = charger("recharges_datacenter")
+        if rc is None or rc.empty:
+            f = Path(__file__).resolve().parent.parent / "data" / "recharges_datacenter.xlsx"
+            if not f.exists():
+                return
+            rc = lire_classeur_recharges(f.read_bytes())
+        r = enrichir(rc[COLONNES_BASE])
+        if r.empty:
+            return
+        src = "Classeur « Suivi des recharges » — Data Center"
+        comp = mois_complets(r)
+        n = int(r["annee"].max())
+        dern = comp["mois"].max()
+        mmax = dern.month if pd.notna(dern) and dern.year == n else 12
+        rec_n = r.loc[r["annee"] == n, "recettes"].sum()
+        rec_c = r.loc[(r["annee"] == n) & (r["mois_num"] <= mmax), "recettes"].sum()
+        rec_p = r.loc[(r["annee"] == n - 1) & (r["mois_num"] <= mmax), "recettes"].sum()
+        a0 = int(r["annee"].min())
+        add("Recettes Data Center de l'exercice (à date)", "Data Center revenue for the year (to date)", round(rec_n),
+            "FCFA", src, f"{n}", "Calculé")
+        add("Recettes Data Center à période égale", "Data Center revenue, same period", round(rec_c), "FCFA", src,
+            f"janvier à {MOIS_LONGS[mmax - 1]} {n}", "Calculé")
+        if rec_p:
+            add("Évolution des recettes à période égale", "Revenue change, same period",
+                round((rec_c / rec_p - 1) * 100, 1), "%", src, f"{n} / {n - 1}", "Calculé")
+        add("Recettes cumulées Data Center depuis " + str(a0), f"Cumulative Data Center revenue since {a0}",
+            round(r["recettes"].sum()), "FCFA", src, f"{r['mois'].min():%m/%Y} – {r['mois'].max():%m/%Y}", "Calculé")
+        med = comp["clients"].median()
+        fiable = comp[(comp["clients"] > med / 3) & (comp["clients"] < med * 3) & (comp["clients"] != comp["energie_kwh"])]
+        if len(fiable) >= 24:
+            prem = fiable[fiable["annee"] == fiable["annee"].min()]
+            add("Énergie vendue par client — première année", "Energy sold per customer — first year",
+                round(prem["kwh_par_client"].mean(), 1), "kWh/mois", src, str(int(prem["annee"].iloc[0])), "Calculé")
+            add("Énergie vendue par client — 12 derniers mois", "Energy sold per customer — last 12 months",
+                round(fiable.tail(12)["kwh_par_client"].mean(), 1), "kWh/mois", src,
+                f"{fiable.tail(12)['mois'].min():%m/%Y} – {fiable.tail(12)['mois'].max():%m/%Y}", "Calculé")
+    except Exception:  # noqa: BLE001 — ces indicateurs sont un complément, jamais bloquants
+        return
 
 
 def indicateurs(data, inclure_paie: bool, references: pd.DataFrame) -> pd.DataFrame:
@@ -153,6 +211,7 @@ def indicateurs(data, inclure_paie: bool, references: pd.DataFrame) -> pd.DataFr
         add("Recettes des ventes importées", "Revenue from imported sales", round(pd.to_numeric(ve["Montant (FCFA)"]).sum()), "FCFA", "États de vente importés", periode, "Calculé")
         add("Compteurs actifs (achat sur 90 jours)", "Active meters (purchase within 90 days)",
             int(ve[ve["Date"] > fin - pd.Timedelta(days=90)]["Compteur"].nunique()), "compteurs", "États de vente importés", f"{fin:%d/%m/%Y}", "Calculé")
+    _indicateurs_recharges(add)
     bu = budget_registre()
     if bu is not None and not bu.empty:
         b = bu.copy()
@@ -202,30 +261,92 @@ def controles(ind: pd.DataFrame, en: bool = False) -> list[str]:
     if actifs and cpt and actifs > cpt:
         out.append("Active meters exceed the installed base: check sales imports and the reference base." if en else
                    "Compteurs actifs supérieurs au parc installé : vérifier les imports de ventes et le parc de référence.")
+    ref_rec = val("Recettes cumulées (Data Center)")
+    calc = ind.loc[ind["Indicateur"].str.startswith("Recettes cumulées Data Center depuis"), "Valeur"]
+    if ref_rec and len(calc) and abs(float(calc.iloc[0]) - ref_rec) / ref_rec > 0.01:
+        out.append(f"Cumulative revenue: reference {_fmt(ref_rec)} vs {_fmt(calc.iloc[0])} computed from the recharge "
+                   "workbook — keep only one figure, with its date." if en else
+                   f"Recettes cumulées : référence {_fmt(ref_rec)} FCFA contre {_fmt(calc.iloc[0])} FCFA calculés depuis le "
+                   "classeur des recharges — ne retenir qu'un chiffre, daté, dans le dossier.")
     for _, r in ind[ind["Statut"].isin(["À actualiser"])].iterrows():
         out.append(f"'{r['Indicator']}' is flagged 'to be updated' (date: {r['Date'] or 'not set'})." if en else
                    f"« {r['Indicateur']} » est marqué « à actualiser » (date : {r['Date'] or 'non renseignée'}).")
     return out
 
 
-def valeurs_gabarit(ind: pd.DataFrame) -> dict:
-    def v(lib, dec=0, defaut="⟨n.d.⟩"):
-        s = ind.loc[ind["Indicateur"] == lib, "Valeur"]
+def valeurs_gabarit(ind: pd.DataFrame, en: bool = False) -> dict:
+    """Valeurs injectées dans les accolades des textes. Décimales à la virgule en français."""
+    def dec(txt: str) -> str:
+        return txt if en else re.sub(r"(?<=\d)\.(?=\d)", ",", txt)
+
+    def ligne(lib, prefixe=False):
+        m = ind["Indicateur"].str.startswith(lib) if prefixe else ind["Indicateur"] == lib
+        return ind[m]
+
+    def v(lib, d=0, defaut="⟨n.d.⟩", prefixe=False, signe=False):
+        s = ligne(lib, prefixe)["Valeur"]
         if not len(s):
             return defaut
         x = s.iloc[0]
-        return _fmt(x, dec) if isinstance(x, (int, float)) else str(x)
+        if isinstance(x, (int, float)):
+            t = _fmt(x, d)
+            return dec(("+" + t) if signe and float(x) > 0 else t)
+        return str(x)
+
+    def date(lib, prefixe=False):
+        s = ligne(lib, prefixe)["Date"]
+        return str(s.iloc[0]) if len(s) else "⟨n.d.⟩"
+
     pr = v("Postes pourvus / requis")
     pourvus, requis = (pr.split("/") + ["⟨n.d.⟩"])[:2] if "/" in pr else ("⟨n.d.⟩", "⟨n.d.⟩")
     bud = ind[ind["Indicateur"].str.startswith("Budget prévisionnel")]
     bf = ind[ind["Indicateur"].str.startswith("dont fonctionnement")]
     bi = ind[ind["Indicateur"].str.startswith("dont investissement")]
+    taux = "⟨n.d.⟩"
+    try:
+        c = float(ligne("Compteurs à prépaiement installés")["Valeur"].iloc[0])
+        p = float(ligne("Potentiel de ménages desservables")["Valeur"].iloc[0])
+        taux = dec(_fmt(c / p * 100, 1)) if p else taux
+    except (IndexError, TypeError, ValueError):
+        pass
+    src_cpt = ligne("Compteurs posés dans l'année")["Source"]
+    phases = re.search(r"\((Phase[^)]*)\)", str(src_cpt.iloc[0])) if len(src_cpt) else None
+    periode = date("Recettes Data Center à période égale")
+    if en and periode != "⟨n.d.⟩":
+        mois_en = dict(zip(["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre",
+                            "octobre", "novembre", "décembre"],
+                           ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+                            "October", "November", "December"]))
+        for fr_, en_ in mois_en.items():
+            periode = periode.replace(fr_, en_)
+        periode = periode.replace(" à ", " to ")
     return {"sites": v("Sites solaires installés"), "kwc": v("Puissance installée", 1), "antennes": v("Antennes du réseau solaire"),
             "equipes": v("Équipes terrain constituées"), "pourvus": pourvus.strip(), "requis": requis.strip(),
             "manques": v("Postes manquants"),
             "budget": _fmt(bud["Valeur"].iloc[0]) if len(bud) else "⟨n.d.⟩",
             "budget_f": _fmt(bf["Valeur"].iloc[0]) if len(bf) else "⟨n.d.⟩",
-            "budget_i": _fmt(bi["Valeur"].iloc[0]) if len(bi) else "⟨n.d.⟩"}
+            "budget_i": _fmt(bi["Valeur"].iloc[0]) if len(bi) else "⟨n.d.⟩",
+            # références institutionnelles et SDMSE
+            "centrales_op": v("Centrales solaires opérationnelles"),
+            "compteurs_installes": v("Compteurs à prépaiement installés"),
+            "potentiel_menages": v("Potentiel de ménages desservables"),
+            "abonnes": v("Abonnés réels", prefixe=True),
+            "taux_comptage": taux,
+            "compteurs_annee": v("Compteurs posés dans l'année"),
+            "compteurs_phases": (phases.group(1) if phases else "⟨répartition par phase n.d.⟩"),
+            "dispo_dc": v("Disponibilité du Data Center", 1).replace(",0", "").replace(".0", ""),
+            "requetes": v("Requêtes traitées par le Data Center"),
+            "centrales_supervisees": v("Centrales raccordées à la supervision à distance"),
+            # classeur des recharges
+            "annee": date("Recettes Data Center de l'exercice (à date)"),
+            "recettes_annee": v("Recettes Data Center de l'exercice (à date)"),
+            "recettes_comp": v("Recettes Data Center à période égale"),
+            "periode_comp": periode,
+            "evol_recettes": v("Évolution des recettes à période égale", 1, signe=True),
+            "cumul_recettes": v("Recettes cumulées Data Center depuis", prefixe=True),
+            "kwh_client_debut": v("Énergie vendue par client — première année", 0),
+            "annee_debut": date("Énergie vendue par client — première année"),
+            "kwh_client_fin": v("Énergie vendue par client — 12 derniers mois", 0)}
 
 
 def remplir(texte: str, valeurs: dict) -> str:
@@ -243,7 +364,7 @@ def generer_pdf(langue: str, audience: str, titre: str, textes: dict, ind: pd.Da
     from .data import NAVY, GREEN, AMBER, RED
     en = langue == "EN"
     col_lib = "Indicator" if en else "Indicateur"
-    valeurs = valeurs_gabarit(ind)
+    valeurs = valeurs_gabarit(ind, en=en)
     kp = []
     for lib in ("Sites solaires installés", "Puissance installée", "Équipes terrain constituées", "Postes manquants"):
         r = ind[ind["Indicateur"] == lib]
@@ -255,9 +376,9 @@ def generer_pdf(langue: str, audience: str, titre: str, textes: dict, ind: pd.Da
         m = float(b["Valeur"].iloc[0]) / 1e6
         kp.append((b[col_lib].iloc[0], f"{m:,.1f} M {'XAF' if en else 'FCFA'}".replace(",", " ").replace(".", "." if en else ",")))
     sections = []
-    for cle, tfr, ten in SECTIONS:
+    for n_sec, (cle, tfr, ten) in enumerate(SECTIONS):
         sections.append({"titre": ten if en else tfr, "texte": remplir(textes[cle][1 if en else 0], valeurs),
-                         "image_bytes": None, "tableau": None})
+                         "image_bytes": None, "tableau": None, "nouvelle_page": n_sec > 0, "taille": 10})
     if data is not None and getattr(data, "grid", None) is not None and not data.grid.empty and "Statut équipe" in data.grid.columns:
         cnt = data.grid["Statut équipe"].value_counts()
         lab = [{"Complète": "Complete", "Partielle": "Partial", "Critique": "Critical"}.get(x, x) if en else x for x in cnt.index]
