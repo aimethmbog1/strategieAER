@@ -94,6 +94,7 @@ def plotly_base_layout(fig: go.Figure, height: int = 380, legend: bool = True) -
         showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hoverlabel=dict(bgcolor="white", font_size=12),
+        separators=", ",  # format français : virgule décimale, espace pour les milliers
     )
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=True, gridcolor="rgba(31,56,100,0.08)", zeroline=False)
@@ -188,7 +189,6 @@ def render_sidebar_footer(generated_on: str):
     st.sidebar.markdown("---")
     if generated_on:
         st.sidebar.caption(generated_on)
-    st.sidebar.markdown("**Autres applications AER**  \n"
-                        "[🔌 Statistiques des compteurs](https://aermeterdashboard.streamlit.app/)  \n"
+    st.sidebar.markdown("**Autre application AER**  \n"
                         "[🗂️ Suivi des dossiers (ERP)](https://aerapperp.streamlit.app/)")
     st.sidebar.caption("AER · Usage interne — accès journalisé. Voir « Mentions et confidentialité ».")
