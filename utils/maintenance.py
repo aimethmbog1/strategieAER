@@ -89,25 +89,39 @@ def pannes_ouvertes(reg: pd.DataFrame) -> pd.DataFrame:
     return reg[(reg["type"] == TYPES[0]) & (reg["statut"] == "En panne")]
 
 
-def etat_parc(ref: pd.DataFrame, reg: pd.DataFrame) -> pd.DataFrame:
-    """Par phase : centrales, à l'arrêt, fonctionnelles, puissances et ratios."""
-    arret = set(pannes_ouvertes(reg)["site_id"])
-    r = ref.assign(a_larret=ref["site_id"].isin(arret))
-    g = r.groupby("Phase").apply(lambda x: pd.Series({
-        "Centrales": len(x),
-        "À l'arrêt": int(x["a_larret"].sum()),
-        "Fonctionnelles": int((~x["a_larret"]).sum()),
-        "Puissance totale (kWc)": round(x["Puissance (kWc)"].sum(), 1),
-        "Puissance fonctionnelle (kWc)": round(x.loc[~x["a_larret"], "Puissance (kWc)"].sum(), 1),
-    }), include_groups=False).reset_index()
+def etat_parc(ref: pd.DataFrame, reg: pd.DataFrame, classes: pd.Series | None = None) -> pd.DataFrame:
+    """Par phase : centrales par classe d'exploitation, puissances et ratios.
+    `classes` (index site_id) vient des journaux de maintenance ; sans journal, une centrale sans panne ouverte
+    est comptée fonctionnelle. Une panne saisie et non clôturée prime toujours (« À l'arrêt »)."""
+    r = ref.copy()
+    if classes is not None:
+        r["classe"] = r["site_id"].map(classes).fillna("Non renseigné")
+    else:
+        r["classe"] = "Fonctionnelle (H24)"
+    r.loc[r["site_id"].isin(set(pannes_ouvertes(reg)["site_id"])), "classe"] = "À l'arrêt"
+    kw = "Puissance (kWc)"
+    def agg(x):
+        c = x["classe"]
+        en_service = c.isin(["Fonctionnelle (H24)", "Fonctionnement partiel"])
+        return pd.Series({
+            "Centrales": len(x), "Fonctionnelles (H24)": int((c == "Fonctionnelle (H24)").sum()),
+            "Fonctionnement partiel": int((c == "Fonctionnement partiel").sum()),
+            "À l'arrêt": int((c == "À l'arrêt").sum()), "Non renseigné": int((c == "Non renseigné").sum()),
+            "Puissance totale (kWc)": round(x[kw].sum(), 1),
+            "Puissance en service (kWc)": round(x.loc[en_service, kw].sum(), 1),
+            "Puissance à l'arrêt (kWc)": round(x.loc[c == "À l'arrêt", kw].sum(), 1)})
+    g = r.groupby("Phase").apply(agg, include_groups=False).reset_index()
     tot = pd.DataFrame([{"Phase": "Total parc", **g.drop(columns="Phase").sum().to_dict()}])
     g = pd.concat([g, tot], ignore_index=True)
-    g["% centrales fonctionnelles"] = (g["Fonctionnelles"] / g["Centrales"] * 100).round(1)
-    g["% puissance fonctionnelle"] = (g["Puissance fonctionnelle (kWc)"] / g["Puissance totale (kWc)"] * 100).round(1)
+    g["Fonctionnelles"] = g["Fonctionnelles (H24)"] + g["Fonctionnement partiel"]
+    g["% centrales en service"] = (g["Fonctionnelles"] / g["Centrales"] * 100).round(1)
+    g["% puissance en service"] = (g["Puissance en service (kWc)"] / g["Puissance totale (kWc)"] * 100).round(1)
     g["Part de la puissance du parc (%)"] = (g["Puissance totale (kWc)"] / tot["Puissance totale (kWc)"].iloc[0] * 100).round(1)
-    for c in ("Centrales", "À l'arrêt", "Fonctionnelles"):
+    for c in ("Centrales", "Fonctionnelles (H24)", "Fonctionnement partiel", "À l'arrêt", "Non renseigné", "Fonctionnelles"):
         g[c] = g[c].astype(int)
-    return g
+    return g[["Phase", "Centrales", "Fonctionnelles", "Fonctionnelles (H24)", "Fonctionnement partiel", "À l'arrêt",
+              "Non renseigné", "% centrales en service", "Puissance totale (kWc)", "Puissance en service (kWc)",
+              "Puissance à l'arrêt (kWc)", "% puissance en service", "Part de la puissance du parc (%)"]]
 
 
 def stats_par_centrale(reg: pd.DataFrame, maintenant: pd.Timestamp | None = None) -> pd.DataFrame:

@@ -51,6 +51,10 @@ REGISTRES = {
     "compteurs_lots": "Statistiques compteurs — lots Holley déposés",
     "parametres_pages": "Réglages des pages (seuils, phases, objectifs, options, corrections)",
     "maintenance_interventions": "Parc solaire — maintenance (arrêts, dépannages, visites)",
+    "gmao_defauts": "GMAO — journal des défauts (journaux de maintenance)",
+    "gmao_statuts": "GMAO — état de fonctionnement des centrales",
+    "gmao_inspections": "GMAO — inspections",
+    "gmao_affectations": "GMAO — affectation site / zone / responsable",
 }
 
 
