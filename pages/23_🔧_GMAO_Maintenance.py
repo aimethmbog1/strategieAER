@@ -78,6 +78,7 @@ def classe_site() -> pd.Series:
     """Classe d'exploitation (journal) + arrêt imposé par un BI correctif ouvert."""
     cl = gmao_ui.classes_sites(ref)
     cl = cl if cl is not None else pd.Series("Non renseigné", index=ref["site_id"])
+    cl = cl[~cl.index.duplicated()].reindex(ref["site_id"]).fillna("Non renseigné")
     arr = set(bi.loc[bi["statut"].isin(gc.STATUTS_BI_OUVERTS) & bi["centrale_arret"], "site_id"])
     return cl.where(~cl.index.isin(arr), "À l'arrêt")
 
@@ -389,7 +390,7 @@ def traiter_bi(bid):
 # ============================================================================= ÉQUIPEMENTS
 def module_equipements():
     cl = classe_site()
-    r = ref.assign(classe=ref["site_id"].map(cl))
+    r = ref.assign(classe=ref["site_id"].map(cl).fillna("Non renseigné"))
     c1, c2, c3 = st.columns([1, 1, 2])
     reg = c1.selectbox("Région", ["Toutes"] + sorted(r["Région"].dropna().unique()), key="eq_reg")
     ph = c2.selectbox("Phase", ["Toutes"] + sorted(r["Phase"].dropna().unique()), key="eq_ph")
@@ -402,6 +403,7 @@ def module_equipements():
     if etat:
         v = v[v["classe"].isin(etat)]
     st.caption(" · ".join(f"{ICONES[e]} {e} : {int((v['classe'] == e).sum())}" for e in ICONES) + f" — {len(v)} centrale(s)")
+    quantification(v, reg)
     col_a, col_b = st.columns([2, 3])
     with col_a:
         st.markdown("**Arborescence**")
@@ -414,6 +416,65 @@ def module_equipements():
                            index=None, placeholder="Choisir une centrale…")
         if sid:
             fiche_site(sid, cl.get(sid))
+
+
+def quantification(v, reg):
+    """Centrales et puissance par phase et par état, pour la sélection en cours."""
+    titre = "l'ensemble du parc" if reg == "Toutes" else f"la région {reg}"
+    section_title(f"CENTRALES PAR PHASE ET PAR ÉTAT — {titre.upper()}")
+    if v.empty:
+        st.info("Aucune centrale pour cette sélection.")
+        return
+    etats = list(ICONES)
+    nb = v.pivot_table(index="Phase", columns="classe", values="site_id", aggfunc="count", fill_value=0)
+    nb = nb.reindex(columns=etats, fill_value=0)
+    nb.loc["Total"] = nb.sum()
+    nb["Total"] = nb.sum(axis=1)
+    pw = v.assign(p=pd.to_numeric(v["Puissance (kWc)"], errors="coerce")).pivot_table(
+        index="Phase", columns="classe", values="p", aggfunc="sum", fill_value=0).reindex(columns=etats, fill_value=0)
+    pw.loc["Total"] = pw.sum()
+    pw["Total"] = pw.sum(axis=1)
+    en_service = nb["Fonctionnelle (H24)"] + nb["Fonctionnement partiel"]
+    tab = nb.copy()
+    tab.columns = [f"{ICONES.get(c, '')} {c}".strip() for c in tab.columns]
+    tab["% en service"] = (100 * en_service / nb["Total"]).round(1)
+    tab["Puissance totale (kWc)"] = pw["Total"].round(1)
+    tab["Puissance en service (kWc)"] = (pw["Fonctionnelle (H24)"] + pw["Fonctionnement partiel"]).round(1)
+    tab["Puissance à l'arrêt (kWc)"] = pw["À l'arrêt"].round(1)
+    tab["% puissance en service"] = (100 * tab["Puissance en service (kWc)"] / pw["Total"].where(pw["Total"] > 0)).round(1)
+    tot = nb.loc["Total"]
+    kpi_row([("Centrales", str(int(tot["Total"])), None),
+             ("En service (H24 + partiel)", str(int(en_service["Total"])), f"{tab.at['Total', '% en service']:.1f} %".replace(".", ",")),
+             ("À l'arrêt", str(int(tot["À l'arrêt"])), None),
+             ("Non renseignées", str(int(tot["Non renseigné"])), None),
+             ("kWc en service", f"{tab.at['Total', 'Puissance en service (kWc)']:,.1f}".replace(",", " ").replace(".", ","),
+              f"sur {tab.at['Total', 'Puissance totale (kWc)']:,.1f} kWc".replace(",", " ").replace(".", ","))])
+    st.dataframe(tab.reset_index(), hide_index=True, width="stretch",
+                 column_config={c: st.column_config.ProgressColumn(c, format="%.1f %%", min_value=0, max_value=100)
+                                for c in ["% en service", "% puissance en service"]})
+    couleurs = {"Fonctionnelle (H24)": "#27AE60", "Fonctionnement partiel": "#E67E22", "À l'arrêt": RED,
+                "Non renseigné": "#C7CCD1"}
+    long = nb.drop(index="Total").drop(columns="Total").reset_index().melt(id_vars="Phase", var_name="État", value_name="Centrales")
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = px.bar(long, x="Phase", y="Centrales", color="État", text="Centrales", title="Nombre de centrales",
+                     color_discrete_map=couleurs, category_orders={"État": etats})
+        fig.update_traces(texttemplate="%{text:.0f}", textposition="inside")
+        fig.update_layout(barmode="stack", legend=dict(orientation="h", y=-0.25))
+        st.plotly_chart(_fig(fig, height=340), width="stretch")
+    with c2:
+        lp = pw.drop(index="Total").drop(columns="Total").reset_index().melt(id_vars="Phase", var_name="État", value_name="kWc")
+        fig = px.bar(lp, x="Phase", y="kWc", color="État", title="Puissance installée (kWc)",
+                     color_discrete_map=couleurs, category_orders={"État": etats})
+        fig.update_layout(barmode="stack", legend=dict(orientation="h", y=-0.25))
+        st.plotly_chart(_fig(fig, height=340), width="stretch")
+    if reg == "Toutes":
+        st.markdown("**Répartition par région**")
+        rg = v.pivot_table(index="Région", columns="classe", values="site_id", aggfunc="count", fill_value=0).reindex(columns=etats, fill_value=0)
+        rg["Total"] = rg.sum(axis=1)
+        rg["% en service"] = (100 * (rg["Fonctionnelle (H24)"] + rg["Fonctionnement partiel"]) / rg["Total"]).round(1)
+        st.dataframe(rg.sort_values("Total", ascending=False).reset_index(), hide_index=True, width="stretch",
+                     column_config={"% en service": st.column_config.ProgressColumn(format="%.1f %%", min_value=0, max_value=100)})
 
 
 def fiche_site(sid, classe):
