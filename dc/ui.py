@@ -25,16 +25,18 @@ def exiger_lecture() -> None:
 
 
 @st.cache_resource(show_spinner=False)
-def _init(url: str) -> dict:
+def _init(url: str, version: str) -> dict:
     from . import depot
+    depot._INIT_FAIT.discard(url)
     return depot.initialiser()
 
 
 def initialiser() -> None:
-    """Crée les tables et charge le contenu initial une fois par processus."""
+    """Crée les tables, ajoute les colonnes manquantes et complète le contenu initial : une fois par processus
+    et par version du schéma (VERSION_SCHEMA), donc aussi après une mise à jour du code sans redémarrage."""
     from . import depot
-    eng = depot.moteur()
-    _init(str(eng.url))
+    from .modele import VERSION_SCHEMA
+    _init(str(depot.moteur().url), VERSION_SCHEMA)
 
 
 def style() -> None:

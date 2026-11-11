@@ -145,5 +145,9 @@ audit = Table(
 )
 
 
+# Version du schéma et du référentiel : à incrémenter à chaque évolution, pour forcer la mise à jour de la base
+# même si l'application n'a pas redémarré (le cache de Streamlit conserve sinon l'ancienne initialisation).
+VERSION_SCHEMA = "2026-11-11.2"
+
 # Colonnes ajoutées après la première version : créées par depot.initialiser() sur une base existante
 COLONNES_AJOUTEES = {"dc_equipement": {"u_debut": "INTEGER", "u_fin": "INTEGER"}, "dc_baie": {"hauteur_u": "INTEGER"}}
