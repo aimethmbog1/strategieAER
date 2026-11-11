@@ -7,7 +7,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 RACINE = Path(__file__).resolve().parent.parent
-PAGES = ["Home.py"] + sorted(str(p.relative_to(RACINE)) for p in (RACINE / "pages").glob("*.py"))
+PAGES = ["Home.py"] + sorted(str(p.relative_to(RACINE)) for p in (RACINE / "vues").glob("*.py"))
 
 
 @pytest.fixture(autouse=True)

@@ -1,4 +1,4 @@
-"""Point d'entrée de l'application : navigation par grands domaines (les pages restent dans pages/)."""
+"""Point d'entrée de l'application : navigation par grands domaines (les pages sont dans le dossier vues/ : un dossier « pages/ » ferait basculer Streamlit dans son ancien mode de navigation)."""
 from pathlib import Path
 
 import streamlit as st
@@ -16,11 +16,11 @@ RACINE = Path(__file__).resolve().parent
 
 
 def P(prefixe: str, titre: str, icone: str, defaut: bool = False):
-    f = next((p for p in sorted((RACINE / "pages").glob("*.py")) if p.name.startswith(prefixe)), None)
+    f = next((p for p in sorted((RACINE / "vues").glob("*.py")) if p.name.startswith(prefixe)), None)
     if f is None:
         return None
     url = f.stem.split("_", 2)[-1] if f.stem.count("_") >= 2 else f.stem
-    return st.Page(f"pages/{f.name}", title=titre, icon=icone, default=defaut, url_path=None if defaut else url)
+    return st.Page(f"vues/{f.name}", title=titre, icon=icone, default=defaut, url_path=None if defaut else url)
 
 
 r = role()
@@ -43,6 +43,7 @@ MENU = {
     ],
     "Commercial et comptage": [
         P("18_", "Recettes et abonnés", "💵"),
+        P("25_", "Clients institutionnels", "🏢"),
         P("21_", "Recharges Data Center", "🔋"),
         P("8_", "Statistiques compteurs", "🔌"),
     ],

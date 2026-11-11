@@ -46,9 +46,9 @@ class Bloc:
 
 
 def _page(prefixe: str) -> str:
-    for f in sorted((RACINE / "pages").iterdir()):
+    for f in sorted((RACINE / "vues").iterdir()):
         if f.name.startswith(prefixe) and f.suffix == ".py":
-            return f"pages/{f.name}"
+            return f"vues/{f.name}"
     return ""
 
 
@@ -215,6 +215,24 @@ def _ventes():
     return f
 
 
+def _clients_inst():
+    def f(b):
+        from . import clients_inst as ci
+        op, fac, pay = (charger(n) for n in ("ci_operations", "ci_factures", "ci_paiements"))
+        if op is None or op.empty:
+            b.note = "Aucune recharge de client institutionnel saisie."
+            return
+        op, fac, pay = ci._normaliser("ci_operations", op), ci._normaliser("ci_factures", fac), ci._normaliser("ci_paiements", pay)
+        fs = ci.factures_avec_soldes(fac, pay, pd.Timestamp(ci.maintenant()).normalize())
+        an = int(op["date"].dt.year.max())
+        o = op[op["date"].dt.year == an]
+        b.kpis = [(f"Ventes {an} (HT)", fcfa(o["montant_ht"].sum()), f"{o['client'].nunique()} client(s)"),
+                  ("Énergie rechargée", f"{nb(o.loc[o['type'] == 'Recharge', 'quantite'].sum())} kWh", None),
+                  ("Reste à recouvrer", fcfa(fs["reste"].sum()), f"{int(fs['statut'].str.contains('chue', na=False).sum())} facture(s) échue(s)"),
+                  ("Non facturé (HT)", fcfa(op.loc[op["facture_id"].isna(), "montant_ht"].sum()), None)]
+    return f
+
+
 def _compteurs():
     def f(b):
         lots = charger("compteurs_lots")
@@ -266,6 +284,7 @@ def blocs(data) -> list[Bloc]:
         _sur("Alertes", "🚨", "19_", _alertes(data)),
         _sur("Recharges Data Center", "🔋", "21_", _recharges()),
         _sur("Recettes et abonnés", "💵", "18_", _ventes()),
+        _sur("Clients institutionnels", "🏢", "25_", _clients_inst()),
         _sur("Compteurs", "🔌", "8_", _compteurs()),
         _sur("Supervision des centrales", "📡", "17_", _supervision()),
         _sur("Équipes terrain", "👷", "3_", _rh(data)),

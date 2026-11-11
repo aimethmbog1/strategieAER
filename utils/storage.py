@@ -64,6 +64,18 @@ REGISTRES = {
     "gmao_budget": "GMAO — budget de maintenance",
     "gmao_prestataires": "GMAO — prestataires",
     "gmao_equipements": "GMAO — équipements par centrale",
+    "ci_clients": "Clients institutionnels — fiches (MTN, IHS…)",
+    "ci_operations": "Clients institutionnels — recharges et achats de compteurs",
+    "ci_factures": "Clients institutionnels — factures",
+    "ci_paiements": "Clients institutionnels — paiements",
+    "fs_centrales": "FusionSolar — centrales connectées",
+    "fs_temps_reel": "FusionSolar — relevés temps réel (90 jours)",
+    "fs_journalier": "FusionSolar — statistiques journalières",
+    "fs_alarmes": "FusionSolar — alarmes",
+    "fs_equipements": "FusionSolar — équipements (onduleurs, SmartLogger…)",
+    "fs_onduleurs": "FusionSolar — dernier relevé des onduleurs",
+    "fs_collectes": "FusionSolar — journal des collectes",
+    "fs_correspondance": "FusionSolar — correspondance avec les sites AER",
 }
 
 
