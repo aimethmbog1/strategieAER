@@ -50,11 +50,13 @@ showWidgetBorder = true
 showSidebarBorder = true
 
 [theme.sidebar]
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F2F5"
-textColor = "#1C1E21"
-borderColor = "#CED0D4"
-primaryColor = "#14532D"
+# Menu latéral sombre (vert forêt → bleu nuit, dégradé ajouté en CSS dans utils/ui.py) avec accent ambre
+backgroundColor = "#062B1A"
+secondaryBackgroundColor = "#0E3B26"
+textColor = "#E7F5EC"
+borderColor = "#1E5A3A"
+primaryColor = "#F59E0B"
+linkColor = "#FCD34D"
 
 [server]
 maxUploadSize = 50

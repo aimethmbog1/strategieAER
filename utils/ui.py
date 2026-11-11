@@ -24,6 +24,76 @@ CARD_SHADOW_MD = "0 4px 16px rgba(5,46,22,0.10)"
 HEADING_FONT = "'Outfit', 'Plus Jakarta Sans', sans-serif"
 
 
+# Menu latéral : fond dégradé, liens animés, page active mise en évidence (accent ambre)
+STYLE_MENU = """
+<style>
+[data-testid="stSidebar"] {
+  background: linear-gradient(185deg, #052E16 0%, #0A3A24 42%, #0C2F45 100%) !important;
+  box-shadow: 4px 0 24px rgba(5, 46, 22, .25);
+}
+[data-testid="stSidebarContent"] { background: transparent; }
+[data-testid="stSidebarContent"]::-webkit-scrollbar { width: 6px; }
+[data-testid="stSidebarContent"]::-webkit-scrollbar-thumb { background: rgba(252, 211, 77, .35); border-radius: 6px; }
+[data-testid="stSidebarHeader"] { padding-bottom: .4rem; }
+
+/* Titres de section */
+[data-testid="stNavSectionHeader"] { margin-top: .9rem; }
+[data-testid="stNavSectionHeader"] p {
+  font-family: 'Outfit', sans-serif; text-transform: uppercase; letter-spacing: .08em;
+  font-size: .68rem !important; font-weight: 800; color: #FCD34D !important;
+  display: flex; align-items: center; gap: .45rem; white-space: normal !important; overflow: visible !important;
+}
+[data-testid="stNavSectionHeader"] .stMarkdownEllipsis { overflow: visible !important; }
+[data-testid="stNavSectionHeader"] p::before {
+  content: ""; flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: #F59E0B;
+  box-shadow: 0 0 8px #F59E0B;
+}
+[data-testid="stNavSectionHeader"] p::after {
+  content: ""; flex: 1 1 12px; min-width: 12px; height: 1px; background: linear-gradient(90deg, rgba(252,211,77,.45), transparent);
+}
+
+/* Liens */
+[data-testid="stSidebarNavLink"] {
+  position: relative; border-radius: 10px; margin: 1px 4px; padding-left: .7rem;
+  transition: background .22s ease, transform .22s ease, box-shadow .22s ease;
+}
+[data-testid="stSidebarNavLink"] span[label], [data-testid="stSidebarNavLink"] span { color: #D8EFE2 !important; }
+[data-testid="stSidebarNavLink"] [data-testid="stIconEmoji"] { transition: transform .25s ease; display: inline-block; }
+[data-testid="stSidebarNavLink"]::before {
+  content: ""; position: absolute; left: 0; top: 18%; bottom: 18%; width: 3px; border-radius: 3px;
+  background: #F59E0B; transform: scaleY(0); transition: transform .22s ease;
+}
+[data-testid="stSidebarNavLink"]:hover {
+  background: rgba(255, 255, 255, .09) !important; transform: translateX(4px);
+}
+[data-testid="stSidebarNavLink"]:hover::before { transform: scaleY(1); }
+[data-testid="stSidebarNavLink"]:hover [data-testid="stIconEmoji"] { transform: scale(1.22) rotate(-6deg); }
+[data-testid="stSidebarNavLink"]:hover span { color: #FFFFFF !important; }
+
+/* Page active */
+[data-testid="stSidebarNavLink"][aria-current="page"] {
+  background: linear-gradient(90deg, rgba(245, 158, 11, .30), rgba(245, 158, 11, .06)) !important;
+  box-shadow: inset 0 0 0 1px rgba(252, 211, 77, .28), 0 4px 14px rgba(0, 0, 0, .25);
+}
+[data-testid="stSidebarNavLink"][aria-current="page"]::before {
+  transform: scaleY(1); top: 12%; bottom: 12%; width: 4px; animation: aer-pulse 2.4s ease-in-out infinite;
+}
+[data-testid="stSidebarNavLink"][aria-current="page"] span { color: #FFFFFF !important; font-weight: 700; }
+@keyframes aer-pulse { 0%, 100% { box-shadow: 0 0 4px #F59E0B; } 50% { box-shadow: 0 0 12px #FCD34D; } }
+
+[data-testid="stSidebarHeader"] img { height: 2.6rem !important; max-width: 220px; }
+/* Choix de module dans le menu (ex. GMAO) */
+[data-testid="stSidebarUserContent"] [role="radiogroup"] label {
+  border-radius: 8px; padding: 2px 6px; transition: background .2s ease, transform .2s ease;
+}
+[data-testid="stSidebarUserContent"] [role="radiogroup"] label:hover { background: rgba(255,255,255,.08); transform: translateX(3px); }
+[data-testid="stSidebarNavSeparator"] { border-color: rgba(252, 211, 77, .25) !important; }
+[data-testid="stSidebarUserContent"] hr { border-color: rgba(255, 255, 255, .15); }
+[data-testid="stSidebarUserContent"] a { color: #FCD34D !important; }
+</style>
+"""
+
+
 def inject_base_style():
     st.markdown(
         f"""
@@ -63,11 +133,14 @@ def inject_base_style():
         h1, h2, h3, h4 {{ font-family: {HEADING_FONT}; }}
         div[data-baseweb="tab-list"] {{ gap: 4px; }}
         [data-testid="stTab"] p {{ font-family: {HEADING_FONT}; font-weight: 600; }}
-        [data-testid="stSidebarNavLink"] {{ border-radius: 10px; }}
         </style>
-        """,
+        """ + STYLE_MENU,
         unsafe_allow_html=True,
     )
+    try:  # logo du menu (fichiers SVG du dossier assets)
+        st.logo("assets/logo_aer.svg", size="large", icon_image="assets/icone_aer.svg")
+    except Exception:  # noqa: BLE001
+        pass
     # Contrôle d'accès : chaque page appelle inject_base_style() juste après set_page_config,
     # ce qui en fait le point d'entrée unique de l'authentification (utils/auth.py).
     from .auth import require_login
