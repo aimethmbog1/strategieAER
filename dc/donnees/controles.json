@@ -1,0 +1,1152 @@
+[
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 1 — Processus actifs",
+  "point": "Nombre de processus Oracle",
+  "commande": "ps -ef | grep -iE 'oracle|crs' | grep -v grep | wc -l",
+  "normal": "Plusieurs dizaines (instance standalone + ASM)",
+  "a_signaler": "Moins de 10 processus",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 1 — Processus actifs",
+  "point": "Présence du processus java (JBoss)",
+  "commande": "ps -ef | grep -i jboss7 | grep -v grep",
+  "normal": "Un processus java actif, option -Xmx8192m",
+  "a_signaler": "Aucun résultat",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "Contrôle Redis",
+  "point": "Réponse du serveur Redis",
+  "commande": "telnet 127.0.0.1 6379 puis PING",
+  "normal": "-NOAUTH Authentication required.",
+  "a_signaler": "+PONG (accès sans mot de passe) ou connexion refusée",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Ligne -/+ buffers/cache, colonne utilisé",
+  "commande": "free -g",
+  "normal": "Entre 3 et 10 Go utilisés sur 62 Go",
+  "a_signaler": "Plus de 40 Go utilisés, ou swap actif",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Ports JBoss en écoute",
+  "commande": "netstat -tulpn | grep -E ':8443|:7777|:8280'",
+  "normal": "Les trois ports sont en écoute",
+  "a_signaler": "Un ou plusieurs ports absents",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Listener Oracle",
+  "commande": "netstat -tulpn | grep 1521",
+  "normal": "Port 1521 en écoute (tnslsnr)",
+  "a_signaler": "Aucun résultat",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 4 — Stockage",
+  "point": "Pourcentage d'utilisation de la partition racine",
+  "commande": "df -h /",
+  "normal": "Autour de 10 %",
+  "a_signaler": "Plus de 80 %",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 4 — Stockage",
+  "point": "Taille de la boîte mail système du compte root",
+  "commande": "du -sh /var/spool/mail/root",
+  "normal": "Moins de 100 Mo",
+  "a_signaler": "Plusieurs centaines de Mo à plusieurs Go (accumulation d'échecs cron)",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 5 — Paquets installés",
+  "point": "Nombre total de paquets",
+  "commande": "rpm -qa | wc -l",
+  "normal": "Autour de 1300",
+  "a_signaler": "Écart important et non expliqué par une mise à jour connue",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 5 — Paquets installés",
+  "point": "Présence d'Oracle dans le gestionnaire de paquets",
+  "commande": "grep -i oracle <(rpm -qa)",
+  "normal": "Aucun résultat (installation manuelle connue)",
+  "a_signaler": "Un résultat apparaît (changement de méthode d'installation à documenter)",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 6 — Utilisateurs et accès",
+  "point": "Comptes ayant les privilèges root",
+  "commande": "awk -F: '$3==0 {print $1}' /etc/passwd",
+  "normal": "Seul « root » apparaît",
+  "a_signaler": "Tout autre nom de compte",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 6 — Utilisateurs et accès",
+  "point": "Origine des connexions récentes",
+  "commande": "last -20",
+  "normal": "Adresses IP internes connues",
+  "a_signaler": "Adresse IP inconnue ou externe",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 7 — Journaux",
+  "point": "Nature des dernières lignes",
+  "commande": "tail -20 /var/log/messages",
+  "normal": "Entrées de routine (MARK, statistiques syslog-ng)",
+  "a_signaler": "Répétition d'erreurs ou redémarrage non planifié",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "TESTSERVER",
+  "phase": "PHASE 8 — Sauvegardes",
+  "point": "Date de la dernière sauvegarde de niveau 0",
+  "commande": "rman target / -c \"list backup summary;\"",
+  "normal": "Sauvegarde datée du jour ou de la veille",
+  "a_signaler": "Dernière sauvegarde de plus de 48 heures",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 1 — État du cluster et de l'instance",
+  "point": "Colonne STATE de chaque ressource, sur les deux nœuds",
+  "commande": "/opt/oracrs/product/11gR2/grid/bin/crsctl status resource -t",
+  "normal": "Tout ONLINE ; ora.suseora.db affiche Open sur dbserver1 et dbserver2",
+  "a_signaler": "Erreur CRS-4535, ou ressource OFFLINE hors ora.gsd",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 1 — État du cluster et de l'instance",
+  "point": "Colonne STATUS",
+  "commande": "echo \"select instance_name, status from v\\$instance;\" | sqlplus -s / as sysdba",
+  "normal": "suseora1 / OPEN",
+  "a_signaler": "ORA-01034 : ORACLE not available",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Ligne -/+ buffers/cache, colonne utilisé",
+  "commande": "free -g",
+  "normal": "Environ 3 Go utilisés sur 62 Go",
+  "a_signaler": "Moins de 2 Go utilisés (instance probablement arrêtée)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Nombre total de processus",
+  "commande": "ps -ef | grep -iE 'oracle|crs' | grep -v grep | wc -l",
+  "normal": "Plusieurs dizaines à une centaine",
+  "a_signaler": "Moins de 20 processus",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Nombre de sessions sur l'instance (limites : processes = 1000, sessions = 1536)",
+  "commande": "echo \"select count(*) from v\\$session;\" | sqlplus -s / as sysdba",
+  "normal": "Environ une centaine de sessions (≈ 100 par instance à la dernière mesure)",
+  "a_signaler": "Plus de 800 sessions, ou chute brutale à quelques unités (application déconnectée)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Heure du serveur, à comparer entre dbserver1, dbserver2 et V-Interface",
+  "commande": "date",
+  "normal": "Écart de quelques secondes au plus entre les serveurs",
+  "a_signaler": "Écart supérieur à 5 secondes (le rapprochement des journaux et la cohérence du cluster en dépendent)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Présence du listener Oracle",
+  "commande": "netstat -tulpn | grep tnslsnr",
+  "normal": "Listener actif sur le port 1525",
+  "a_signaler": "Aucun résultat",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 3 — Réseau",
+  "point": "État de l'agrégat bond0 et de ses deux liens (eth0 et eth2)",
+  "commande": "cat /proc/net/bonding/bond0 | grep -E 'Slave Interface|MII Status'",
+  "normal": "Agrégat et deux liens en « MII Status: up »",
+  "a_signaler": "Un lien « down » : la redondance est perdue, même si le service continue",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Compteurs d'erreurs et de paquets perdus, y compris sur eth1 (interconnexion privée du cluster, hors du bond)",
+  "commande": "ifconfig eth0 eth1 eth2 | grep -E '^eth|errors'",
+  "normal": "Compteurs à 0 et stables d'un contrôle à l'autre",
+  "a_signaler": "Tout compteur en augmentation, notamment des erreurs CRC (cause de l'incident du 16-17 juillet 2026) : contrôler câble, module optique et port du switch",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 4 — Stockage (ASM)",
+  "point": "État (colonne State) et espace libre (Free_MB) de chaque groupe de disques",
+  "commande": "asmcmd lsdg (depuis le compte grid)",
+  "normal": "DG_DATA, DG_INDEX, DG_BACKUP, DG_OCR, DG_ORA tous MOUNTED",
+  "a_signaler": "Un groupe DISMOUNTED ou absent, ou plus de 80 % d'espace utilisé (DG_DATA ≈ 6 % à la dernière mesure)",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 4 — Stockage (ASM)",
+  "point": "Chemins UltraPath vers la baie Dorado 3000 V6",
+  "commande": "upadmin show path",
+  "normal": "4 chemins en état « Normal » pour chaque LUN",
+  "a_signaler": "Un chemin dégradé ou absent (contrôler fibre, port FC ou contrôleur de la baie)",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 5 — Journaux",
+  "point": "Nature des dernières lignes",
+  "commande": "tail -20 /var/log/messages",
+  "normal": "Entrées de routine, aucune alerte crsd/ocssd",
+  "a_signaler": "Message d'erreur crsd/ocssd, éviction de nœud",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 5 — Journaux",
+  "point": "Coupures de lien réseau récentes",
+  "commande": "grep -iE 'link is down|link down' /var/log/messages | tail -5",
+  "normal": "Aucun résultat",
+  "a_signaler": "Tout message de coupure de lien (incident du 16-17 juillet : eth1 à 07h34 et 07h38) : rechercher le lien et traiter la cause avant tout redémarrage",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 5 — Journaux",
+  "point": "Nombre d'occurrences de ce message dans les dernières lignes du journal crsd",
+  "commande": "tail -200 /opt/oracrs/product/11gR2/grid/log/dbserver1/crsd/crsd.log | grep -c \"Policy Engine is not initialized\"",
+  "normal": "0",
+  "a_signaler": "Valeur supérieure à 0 et en croissance (service de coordination du cluster bloqué : intervenir sans attendre)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER1",
+  "phase": "PHASE 6 — Sauvegardes",
+  "point": "Date de la dernière sauvegarde de niveau 0",
+  "commande": "rman target / -c \"list backup summary;\"",
+  "normal": "Sauvegarde datée du jour ou de la veille, généralement exécutée vers 1h du matin",
+  "a_signaler": "Dernière sauvegarde de plus de 48 heures",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 1 — État du cluster et de l'instance",
+  "point": "Colonne STATE de chaque ressource, sur les deux nœuds",
+  "commande": "/opt/oracrs/product/11gR2/grid/bin/crsctl status resource -t",
+  "normal": "Tout ONLINE ; ora.suseora.db affiche Open sur dbserver1 et dbserver2",
+  "a_signaler": "Erreur CRS-4535, ou ressource OFFLINE hors ora.gsd",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 1 — État du cluster et de l'instance",
+  "point": "Colonne STATUS",
+  "commande": "echo \"select instance_name, status from v\\$instance;\" | sqlplus -s / as sysdba",
+  "normal": "suseora2 / OPEN",
+  "a_signaler": "ORA-01034 : ORACLE not available",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Ligne -/+ buffers/cache, colonne utilisé",
+  "commande": "free -g",
+  "normal": "Environ 3 Go utilisés sur 62 Go",
+  "a_signaler": "Moins de 2 Go utilisés (instance probablement arrêtée)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Nombre total de processus",
+  "commande": "ps -ef | grep -iE 'oracle|crs' | grep -v grep | wc -l",
+  "normal": "Plusieurs dizaines à une centaine",
+  "a_signaler": "Moins de 20 processus",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Nombre de sessions sur l'instance (limites : processes = 1000, sessions = 1536)",
+  "commande": "echo \"select count(*) from v\\$session;\" | sqlplus -s / as sysdba",
+  "normal": "Environ une centaine de sessions (≈ 100 par instance à la dernière mesure)",
+  "a_signaler": "Plus de 800 sessions, ou chute brutale à quelques unités (application déconnectée)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Heure du serveur, à comparer entre dbserver1, dbserver2 et V-Interface",
+  "commande": "date",
+  "normal": "Écart de quelques secondes au plus entre les serveurs",
+  "a_signaler": "Écart supérieur à 5 secondes (le rapprochement des journaux et la cohérence du cluster en dépendent)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Présence du listener Oracle",
+  "commande": "netstat -tulpn | grep tnslsnr",
+  "normal": "Listener actif sur le port 1525",
+  "a_signaler": "Aucun résultat",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 3 — Réseau",
+  "point": "État de l'agrégat bond0 et de ses deux liens (eth0 et eth2)",
+  "commande": "cat /proc/net/bonding/bond0 | grep -E 'Slave Interface|MII Status'",
+  "normal": "Agrégat et deux liens en « MII Status: up »",
+  "a_signaler": "Un lien « down » : la redondance est perdue, même si le service continue",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Compteurs d'erreurs et de paquets perdus, y compris sur eth1 (interconnexion privée du cluster, hors du bond)",
+  "commande": "ifconfig eth0 eth1 eth2 | grep -E '^eth|errors'",
+  "normal": "Compteurs à 0 et stables d'un contrôle à l'autre",
+  "a_signaler": "Tout compteur en augmentation, notamment des erreurs CRC (cause de l'incident du 16-17 juillet 2026) : contrôler câble, module optique et port du switch",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 4 — Stockage (ASM)",
+  "point": "État (colonne State) et espace libre (Free_MB) de chaque groupe de disques",
+  "commande": "asmcmd lsdg (depuis le compte grid)",
+  "normal": "DG_DATA, DG_INDEX, DG_BACKUP, DG_OCR, DG_ORA tous MOUNTED",
+  "a_signaler": "Un groupe DISMOUNTED ou absent, ou plus de 80 % d'espace utilisé (DG_DATA ≈ 6 % à la dernière mesure)",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 4 — Stockage (ASM)",
+  "point": "Chemins UltraPath vers la baie Dorado 3000 V6",
+  "commande": "upadmin show path",
+  "normal": "4 chemins en état « Normal » pour chaque LUN",
+  "a_signaler": "Un chemin dégradé ou absent (contrôler fibre, port FC ou contrôleur de la baie)",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 5 — Journaux",
+  "point": "Nombre d'occurrences de ce message dans les dernières lignes du journal crsd",
+  "commande": "tail -200 /opt/oracrs/product/11gR2/grid/log/dbserver2/crsd/crsd.log | grep -c \"Policy Engine is not initialized\"",
+  "normal": "Aucun résultat",
+  "a_signaler": "Valeur supérieure à 0 et en croissance (service de coordination du cluster bloqué : intervenir sans attendre)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 5 — Journaux",
+  "point": "Coupures de lien réseau récentes",
+  "commande": "grep -iE 'link is down|link down' /var/log/messages | tail -5",
+  "normal": "Aucun résultat",
+  "a_signaler": "Tout message de coupure de lien (incident du 16-17 juillet : eth1 à 07h34 et 07h38) : rechercher le lien et traiter la cause avant tout redémarrage",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "DBSERVER2",
+  "phase": "PHASE 6 — Sauvegardes",
+  "point": "Date de la dernière sauvegarde de niveau 0",
+  "commande": "rman target / -c \"list backup summary;\"",
+  "normal": "Sauvegarde datée du jour ou de la veille",
+  "a_signaler": "Dernière sauvegarde de plus de 48 heures",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 1 — Processus actifs",
+  "point": "Présence de eaglewizFKM, servermonitor, agent, JBoss, Nginx",
+  "commande": "ps -ef | grep -iE 'java|jboss|nginx|eaglewiz' | grep -v grep",
+  "normal": "Les cinq processus sont actifs",
+  "a_signaler": "L'un des processus est absent",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 1 — Processus actifs",
+  "point": "Réponse du serveur Redis local",
+  "commande": "telnet 127.0.0.1 6379 puis PING",
+  "normal": "-NOAUTH Authentication required.",
+  "a_signaler": "+PONG (accès sans mot de passe) ou connexion refusée",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Ligne -/+ buffers/cache, colonne utilisé ; ligne Swap",
+  "commande": "free -g",
+  "normal": "Entre 5 et 9 Go utilisés sur 62 Go ; swap à 0",
+  "a_signaler": "Usage approchant la limite, ou swap utilisé de façon soutenue (marge de swap réduite : 2 Go seulement)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Heure du serveur, à comparer entre V-Interface1, V-Interface2 et les serveurs de base de données",
+  "commande": "date",
+  "normal": "Écart de quelques secondes au plus entre les serveurs",
+  "a_signaler": "Écart supérieur à 5 secondes",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Nombre de connexions établies vers le cluster de base de données (SCAN, VIP et adresses des deux nœuds)",
+  "commande": "netstat -tnp | grep ESTABLISHED | grep -E '192.168.5.(4|5|10|11|12)' | wc -l",
+  "normal": "Environ une centaine de connexions actives (≈ 104 sur V-Interface1 et ≈ 90 sur V-Interface2 à la dernière mesure)",
+  "a_signaler": "Aucune connexion (application déconnectée de la base), ou nombre proche du plafond des pools (9 pools de 10 à 100 connexions)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Ports Nginx en écoute",
+  "commande": "netstat -tulpn | grep -E ':80|:8781'",
+  "normal": "Les deux ports sont en écoute",
+  "a_signaler": "Un port absent",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Port JBoss en écoute (cible de Nginx)",
+  "commande": "netstat -tulpn | grep ':8780'",
+  "normal": "Le port 8780 est en écoute (processus java)",
+  "a_signaler": "Port absent : Nginx n'a plus de serveur applicatif à joindre",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Compteurs d'erreurs et de paquets perdus sur les interfaces",
+  "commande": "ifconfig | grep -E '^(eth|bond)|errors'",
+  "normal": "Compteurs à 0 et stables d'un contrôle à l'autre",
+  "a_signaler": "Tout compteur en augmentation, notamment des erreurs CRC : contrôler câble, module optique et port du switch",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 4 — Stockage",
+  "point": "Pourcentage d'utilisation de la partition racine",
+  "commande": "df -h /",
+  "normal": "Sous 60 %, en légère progression contrôlée",
+  "a_signaler": "Plus de 80 %",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 4 — Stockage",
+  "point": "Taille du dossier de journaux JBoss",
+  "commande": "du -sh /app/jboss7/jboss-as-7.1.1.Final/standalone200/log/",
+  "normal": "Croissance limitée depuis le dernier contrôle (point connu : volume déjà important, en l'attente d'une politique de purge)",
+  "a_signaler": "Croissance de plus de 20 Go depuis le dernier contrôle",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 5 — Journaux applicatifs",
+  "point": "Répartition des codes de réponse HTTP",
+  "commande": "tail -30 /app/nginx/logs/access.log",
+  "normal": "Majorité de codes 200/202",
+  "a_signaler": "Répétition de codes 499 ou 5xx sur un même endpoint",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 5 — Journaux applicatifs",
+  "point": "Coupures de lien réseau récentes",
+  "commande": "grep -iE 'link is down|link down' /var/log/messages | tail -5",
+  "normal": "Aucun résultat",
+  "a_signaler": "Tout message de coupure de lien : rechercher le lien concerné et le rapprocher des journaux du switch",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE1",
+  "phase": "PHASE 6 — Sauvegardes",
+  "point": "Présence d'une tâche de sauvegarde de la configuration applicative",
+  "commande": "crontab -l ; su - jboss7 -c \"crontab -l\"",
+  "normal": "Point connu : aucune tâche identifiée à ce jour — situation à corriger (voir recommandations)",
+  "a_signaler": "Sans objet tant que ce point n'est pas corrigé",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 1 — Processus actifs",
+  "point": "Présence de JBoss et Nginx",
+  "commande": "ps -ef | grep -iE 'java|jboss|nginx' | grep -v grep",
+  "normal": "Les deux processus sont actifs",
+  "a_signaler": "L'un des processus est absent",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 1 — Processus actifs",
+  "point": "Réponse du serveur Redis local",
+  "commande": "telnet 127.0.0.1 6379 puis PING",
+  "normal": "-NOAUTH Authentication required.",
+  "a_signaler": "+PONG (accès sans mot de passe) ou connexion refusée",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Ligne -/+ buffers/cache, colonne utilisé ; ligne Swap",
+  "commande": "free -g",
+  "normal": "Entre 5 et 9 Go utilisés sur 62 Go ; swap à 0",
+  "a_signaler": "Usage approchant la limite, ou swap utilisé de façon soutenue (marge de swap réduite : 2 Go seulement)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 2 — Ressources",
+  "point": "Heure du serveur, à comparer entre V-Interface1, V-Interface2 et les serveurs de base de données",
+  "commande": "date",
+  "normal": "Écart de quelques secondes au plus entre les serveurs",
+  "a_signaler": "Écart supérieur à 5 secondes",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Nombre de connexions établies vers le cluster de base de données (SCAN, VIP et adresses des deux nœuds)",
+  "commande": "netstat -tnp | grep ESTABLISHED | grep -E '192.168.5.(4|5|10|11|12)' | wc -l",
+  "normal": "Environ une centaine de connexions actives (≈ 104 sur V-Interface1 et ≈ 90 sur V-Interface2 à la dernière mesure)",
+  "a_signaler": "Aucune connexion (application déconnectée de la base), ou nombre proche du plafond des pools (9 pools de 10 à 100 connexions)",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Ports Nginx en écoute",
+  "commande": "netstat -tulpn | grep -E ':80|:8781'",
+  "normal": "Les deux ports sont en écoute",
+  "a_signaler": "Un port absent",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Port JBoss en écoute (cible de Nginx)",
+  "commande": "netstat -tulpn | grep ':8780'",
+  "normal": "Le port 8780 est en écoute (processus java)",
+  "a_signaler": "Port absent : Nginx n'a plus de serveur applicatif à joindre",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 3 — Réseau",
+  "point": "Compteurs d'erreurs et de paquets perdus sur les interfaces",
+  "commande": "ifconfig | grep -E '^(eth|bond)|errors'",
+  "normal": "Compteurs à 0 et stables d'un contrôle à l'autre",
+  "a_signaler": "Tout compteur en augmentation, notamment des erreurs CRC : contrôler câble, module optique et port du switch",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 4 — Stockage",
+  "point": "Pourcentage d'utilisation de la partition racine",
+  "commande": "df -h /",
+  "normal": "Sous 40 %, en légère progression contrôlée",
+  "a_signaler": "Plus de 80 %",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 4 — Stockage",
+  "point": "Taille du dossier de journaux JBoss",
+  "commande": "du -sh /app/jboss7/jboss-as-7.1.1.Final/standalone200/log/",
+  "normal": "Croissance limitée depuis le dernier contrôle (point connu : volume déjà important, en l'attente d'une politique de purge)",
+  "a_signaler": "Croissance de plus de 20 Go depuis le dernier contrôle",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 5 — Journaux applicatifs",
+  "point": "Répartition des codes de réponse HTTP",
+  "commande": "tail -30 /app/nginx/logs/access.log",
+  "normal": "Majorité de codes 200/202",
+  "a_signaler": "Répétition de codes 499 ou 5xx sur un même endpoint",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 5 — Journaux applicatifs",
+  "point": "Coupures de lien réseau récentes",
+  "commande": "grep -iE 'link is down|link down' /var/log/messages | tail -5",
+  "normal": "Aucun résultat",
+  "a_signaler": "Tout message de coupure de lien : rechercher le lien concerné et le rapprocher des journaux du switch",
+  "frequence": "Journalier"
+ },
+ {
+  "source": "Fiche d'audit serveurs (25/10/2026)",
+  "cible": "V-INTERFACE2",
+  "phase": "PHASE 6 — Sauvegardes",
+  "point": "Présence d'une tâche de sauvegarde de la configuration applicative",
+  "commande": "crontab -l ; su - jboss7 -c \"crontab -l\"",
+  "normal": "Point connu : aucune tâche identifiée à ce jour — situation à corriger (voir recommandations)",
+  "a_signaler": "Sans objet tant que ce point n'est pas corrigé",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Positionnement correct et stable de l'équipement",
+  "commande": "",
+  "normal": "L'équipement doit être posé de façon stable et à plat, dans un environnement ventilé et sec, à l'écart de toute source de chaleur. Aucun débris ne doit s'accumuler autour de l'équipement",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Température de la salle",
+  "commande": "",
+  "normal": "Température de la salle : 0–40 °C (limite constructeur) ; relever la valeur sur la supervision (ECC800)",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Humidité de la salle",
+  "commande": "",
+  "normal": "Humidité relative (HR) de la salle : 5–90 %",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "État de la climatisation",
+  "commande": "",
+  "normal": "La climatisation fonctionne de façon continue et stable, afin de maintenir la température et l'humidité de la salle dans la plage spécifiée",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "État de propreté",
+  "commande": "",
+  "normal": "Les filtres à poussière sont nettoyés ou remplacés à temps afin de ne pas gêner la ventilation et la dissipation thermique de la porte de baie et du cadre de ventilateurs L'équipement lui-même ne présente pas de dépôt de poussière visible Des mesures efficaces empêchent les petits animaux (cafards, par exemple) d'entrer dans la salle",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Conformité de la mise à la terre : méthode et résistance",
+  "commande": "",
+  "normal": "1. Il est en général exigé que la terre de travail, la terre de protection et la terre du bâtiment pour la protection contre la foudre soient réalisées séparément ; une terre commune est admise lorsque les conditions de la salle l'imposent 2. Lorsque le câble de terre de l'équipement est raccordé à la borne de la barre de terre, la résistance de terre doit être inférieure à 5 Ω Lorsque le câble de terre de l'équipement est raccordé à une prise de terre, la résistance de terre doit être inférieure à 10 Ω Si l'environnement ne permet pas la mise à la terre, les câbles de terre de plusieurs équipements peuvent être interconnectés afin de maintenir une différence de potentiel identique entre les équipements",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Raccordement électrique normal et fiable",
+  "commande": "",
+  "normal": "Le câble d'alimentation est correctement et fermement raccordé à l'emplacement prévu de l'équipement. Le voyant d'alimentation de l'équipement est vert et allumé en continu Les équipements à double alimentation sont raccordés à deux sources distinctes (deux PDU / onduleurs différents), et les deux alimentations sont en service La barre d'alimentation est de qualité fiable et certifiée CCC",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Système d'alimentation normal",
+  "commande": "",
+  "normal": "Le système d'alimentation fonctionne normalement. Plage de tension nominale continue : 48 V à 60 V Plage de tension nominale alternative : 100 V à 240 V",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Atmosphère acido-basique",
+  "commande": "",
+  "normal": "Aucune rouille des métaux, corrosion des circuits imprimés ou des connecteurs dans la salle",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Protection contre la foudre",
+  "commande": "",
+  "normal": "Aucun câble série ne passe à l'extérieur du bâtiment Aucun câble Ethernet ne passe à l'extérieur du bâtiment",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Conformité de l'installation",
+  "commande": "",
+  "normal": "Des panneaux obturateurs sont installés dans les emplacements sans module d'interface Les modules d'interface, les panneaux obturateurs et les câbles sont fixés par des vis serrées. Les gaines isolantes des câbles ne sont pas en contact avec des objets à haute température Tous les types de câbles sont rangés par catégorie, correctement attachés et dotés d'une longueur de réserve, afin d'éviter les erreurs de branchement et de débranchement Le câble d'alimentation n'est pas attaché avec le câble de signal Les ports optiques inutilisés sont munis de bouchons anti-poussière",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "SALLE",
+  "phase": "Environnement de la salle",
+  "point": "Étiquetage et plan de câblage",
+  "commande": "",
+  "normal": "Chaque câble est étiqueté aux deux extrémités (équipement et port) et correspond au plan d'interconnexion à jour ; aucun câble ni port actif n'est absent de la documentation",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Hebdomadaire"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Version d'exploitation de l'équipement",
+  "commande": "Exécuter la commande [display version]",
+  "normal": "Les numéros de version matérielle (PCB) et logicielle de la carte sont conformes aux exigences",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Paquet logiciel",
+  "commande": "Exécuter la commande [display startup]",
+  "normal": "Vérifier que les noms des fichiers système suivants sont corrects : 1. Nom du paquet de démarrage actuel 2. Nom du paquet de démarrage au prochain démarrage 3. Nom du paquet de secours 4. Noms du fichier de configuration, de la licence, du patch et du fichier vocal, pour le démarrage actuel et le prochain démarrage",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Informations de licence",
+  "commande": "Exécuter successivement les commandes [display license] et [display license state]",
+  "normal": "Vérifier que le nom de fichier, la version et les éléments de configuration de la licence GTL sont conformes, et déterminer si une mise à niveau est nécessaire Vérifier que l'élément « Master board license state » est « Normal ». Lorsqu'il est « Demo » ou « Trial », confirmer que la licence est encore dans sa période de validité",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Informations de patch",
+  "commande": "Exécuter la commande [display patch-information]",
+  "normal": "Le fichier de patch doit répondre aux besoins réels. Il est recommandé de charger le dernier patch publié par Huawei pour la version du produit Les patchs doivent être effectifs, c'est-à-dire que le nombre total de patchs correspond au nombre de patchs en cours d'exécution",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Heure du système",
+  "commande": "Exécuter la commande [display clock]",
+  "normal": "1. L'heure doit être cohérente avec l'heure locale (écart de 5 min au maximum), afin de localiser précisément les défauts grâce à l'horodatage 2. Sinon, exécuter la commande [clock datetime] en vue utilisateur pour corriger l'heure du système 3. L'équipement doit être synchronisé sur la même source de temps (NTP) que les serveurs, afin de pouvoir rapprocher les journaux lors d'un incident",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Espace Flash",
+  "commande": "Exécuter la commande [dir flash:] en vue utilisateur",
+  "normal": "Tous les fichiers de l'espace Flash doivent être utiles ; sinon, exécuter la commande [delete /unreserved] en vue utilisateur pour les supprimer",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Espace de la carte SD",
+  "commande": "Exécuter la commande [dir sd0:] ou [dir sd1:] en vue utilisateur",
+  "normal": "Tous les fichiers de la carte SD doivent être utiles ; sinon, exécuter la commande [delete /unreserved] en vue utilisateur pour les supprimer",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Centre d'information",
+  "commande": "Exécuter la commande [display info-center]",
+  "normal": "L'élément « Information Center » est réglé sur « enabled »",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Exactitude de la configuration",
+  "commande": "Exécuter la commande [display current-configuration]",
+  "normal": "Vérifier que la configuration de l'équipement est correcte en examinant les paramètres actuellement en vigueur",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Commutateurs de débogage",
+  "commande": "Exécuter la commande [display debugging]",
+  "normal": "Lorsque l'équipement fonctionne normalement, tous les commutateurs de débogage doivent être désactivés",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Enregistrement de la configuration",
+  "commande": "Exécuter la commande [compare configuration] en vue utilisateur",
+  "normal": "La configuration courante est identique au fichier de configuration qui sera utilisé au prochain démarrage",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Connectivité réseau",
+  "commande": "Exécuter respectivement les commandes [ping] et [tracert] vers les passerelles et vers les serveurs de la plateforme",
+  "normal": "Les équipements communiquent normalement entre eux",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Sauvegarde externe de la configuration",
+  "commande": "Comparer le fichier de configuration enregistré hors de l'équipement (serveur de sauvegarde) avec la sortie de [display saved-configuration]",
+  "normal": "Une copie récente de la configuration existe hors de l'équipement et correspond à la configuration en production ; elle est mise à jour après chaque modification",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Informations de base",
+  "point": "Comptes et accès d'administration",
+  "commande": "Exécuter les commandes [display users], [display local-user] et [display telnet server status]",
+  "normal": "Seuls les comptes autorisés existent, les mots de passe par défaut sont changés et l'accès Telnet est désactivé au profit de SSH",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "État de fonctionnement des cartes",
+  "commande": "Exécuter la commande [display device]",
+  "normal": "Vérifier que la présence et l'état des cartes sont normaux : L'état « Online » est « Present » L'état « Power » est « PowerOn » L'état « Register » est « Registered » L'état « Alarm » est « Normal »",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "Redémarrage de l'équipement",
+  "commande": "Exécuter la commande [display reset-reason] en vue diagnostic",
+  "normal": "Vérifier qu'aucun redémarrage anormal n'a eu lieu en examinant les informations de redémarrage (date et cause)",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "Température de l'équipement",
+  "commande": "Exécuter la commande [display temperature all]",
+  "normal": "La température actuelle de chaque module est comprise entre les limites basse et haute, c'est-à-dire que la valeur « Temperature » se situe entre « Lower » et « Upper »",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "État des ventilateurs",
+  "commande": "Exécuter la commande [display fan]",
+  "normal": "L'élément « Present » est « YES », ce qui indique un état normal",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "État de l'alimentation",
+  "commande": "Exécuter la commande [display power]",
+  "normal": "L'élément « State » est « Supply », ce qui indique un état normal",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "Port du service réseau FTP",
+  "commande": "Exécuter la commande [display ftp-server]",
+  "normal": "Les ports de service réseau FTP inutilisés sont fermés",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "Informations d'alarme",
+  "commande": "Exécuter la commande [display alarm active]",
+  "normal": "Aucune alarme. S'il y en a, elle doit être consignée, et toute alarme grave ou de niveau supérieur doit être analysée et traitée immédiatement",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "État du processeur",
+  "commande": "Exécuter la commande [display cpu-usage]",
+  "normal": "Le taux d'occupation du processeur de chaque module est normal. S'il dépasse 80 %, il doit faire l'objet d'un suivi",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "Taux d'utilisation de la mémoire",
+  "commande": "Exécuter la commande [display memory-usage]",
+  "normal": "L'utilisation de la mémoire est normale. Si elle dépasse 60 %, elle doit faire l'objet d'un suivi",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "Informations des journaux",
+  "commande": "Exécuter les commandes [display logbuffer] et [display trapbuffer]",
+  "normal": "Aucune information anormale",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "État de fonctionnement",
+  "point": "Historique des changements d'état des liens",
+  "commande": "Exécuter la commande [display logbuffer] et rechercher les messages UPDOWN, par exemple avec [display logbuffer | include UPDOWN]",
+  "normal": "Aucun lien ne change d'état de façon répétée (instabilité de lien). Tout passage à l'état Down est expliqué et rapproché des journaux des serveurs (messages « link down » de la carte réseau concernée)",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Contenu des interfaces",
+  "point": "Paquets erronés sur l'interface",
+  "commande": "Exécuter la commande [display interface]",
+  "normal": "Pendant le service, vérifier que l'interface ne présente pas de paquets erronés, notamment des erreurs CRC. Sur les ports reliés aux serveurs, tout compteur d'erreurs en augmentation doit être traité (câble, connecteur, module optique)",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Contenu des interfaces",
+  "point": "Éléments de configuration de l'interface",
+  "commande": "Exécuter la commande [display interface]",
+  "normal": "Les éléments de configuration de l'interface sont cohérents : mode duplex, mode de négociation, débit, bouclage, etc.",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Contenu des interfaces",
+  "point": "État de l'interface",
+  "commande": "Exécuter la commande [display interface brief]",
+  "normal": "L'état Up/Down de l'interface correspond à ce qui est planifié, y compris pour tous les ports membres des agrégats reliés aux serveurs",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Contenu des interfaces",
+  "point": "PoE",
+  "commande": "Exécuter la commande [display poe powerstate interface interface-type interface-number]",
+  "normal": "Les interfaces compatibles PoE sont dans un état normal : « Port power ON/OFF » est « ON » et « Port power status » est « Delivering-power »",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Contenu des interfaces",
+  "point": "Statistiques de l'interface",
+  "commande": "Exécuter la commande [display ip interface]. Collecter les données deux fois à 5 min d'intervalle et comparer les données",
+  "normal": "Dans les conditions normales, les données de la seconde collecte n'augmentent pas, et la valeur de référence est supérieure à 500",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Service IP",
+  "point": "Statistiques du trafic IP",
+  "commande": "Exécuter la commande [display ip statistics] pour collecter les données deux fois à 5 min d'intervalle et les comparer",
+  "normal": "Le nombre de paquets erronés et de paquets à TTL expiré collectés en une seule fois est inférieur à 100 Dans les conditions normales, ces nombres n'augmentent pas lors de la seconde collecte",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Service IP",
+  "point": "Statistiques du trafic ICMP",
+  "commande": "Exécuter la commande [display icmp statistics]",
+  "normal": "Les éléments « destination unreachable » et « redirects » ne doivent pas dépasser 100",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Service IP",
+  "point": "Agrégation de liens",
+  "commande": "Exécuter la commande [display eth-trunk]",
+  "normal": "Tous les ports membres de chaque agrégat qui relie un serveur sont « Up » et actifs. Aucun port relié à un serveur ne se trouve en dehors de l'agrégat sans que cela soit documenté",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ },
+ {
+  "source": "Maintenance courante système réseau",
+  "cible": "RESEAU",
+  "phase": "Interfaces et services IP — Service IP",
+  "point": "Modules optiques",
+  "commande": "Exécuter la commande [display transceiver interface interface-type interface-number]",
+  "normal": "Les puissances d'émission et de réception sont dans la plage nominale ; aucun module n'est en alarme",
+  "a_signaler": "Non conforme aux critères",
+  "frequence": "Mensuel"
+ }
+]

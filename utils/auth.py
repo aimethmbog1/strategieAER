@@ -38,6 +38,7 @@ ROLES = {
     "direction": "Direction",
     "drh": "Ressources humaines",
     "sdmse": "Monitoring & statistiques",
+    "technicien": "Technicien Data Center",
     "lecteur": "Lecteur",
 }
 ROLES_EDITION = {"admin", "direction", "drh", "sdmse"}

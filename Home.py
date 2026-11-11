@@ -41,6 +41,17 @@ MENU = {
         P("17_", "Supervision des centrales", "📡"),
         P("24_", "FusionSolar en ligne", "☀️"),
     ],
+    "Data Center FM800": [
+        P("30_", "Tableau de bord Data Center", "🖥️"),
+        P("31_", "Registre des actifs", "🗄️"),
+        P("32_", "Inspections", "📝"),
+        P("33_", "Maintenance", "🛠️"),
+        P("34_", "Alertes", "🚨"),
+        P("35_", "Main courante et passation", "📒"),
+        P("36_", "Analyse des pannes", "🔬"),
+        P("37_", "Rapports Data Center", "📄"),
+        P("38_", "Paramètres Data Center", "⚙️"),
+    ] if (auth_desactivee() or r in {"admin", "direction", "sdmse", "technicien", "lecteur"}) else [],
     "Commercial et comptage": [
         P("18_", "Recettes et abonnés", "💵"),
         P("25_", "Clients institutionnels", "🏢"),
@@ -66,6 +77,8 @@ MENU = {
     ],
 }
 MENU = {k: [p for p in v if p is not None] for k, v in MENU.items()}
+if not auth_desactivee() and r == "technicien":  # le technicien ne voit que le module Data Center
+    MENU = {"Data Center FM800": MENU["Data Center FM800"]}
 try:
     nav = st.navigation({k: v for k, v in MENU.items() if v}, expanded=True)
 except TypeError:  # versions sans le paramètre « expanded »
