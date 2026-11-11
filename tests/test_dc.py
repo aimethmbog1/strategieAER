@@ -161,3 +161,15 @@ def test_renommage_et_completion(monkeypatch):
     assert "SAN-SNS2624" not in e.index and e.at["SNS2624-01", "baie"] == "A3"
     assert e.at["SNS2624-01", "fournisseur"] == "Fournisseur saisi"  # jamais écrasé
     assert e.at["SNS2624-01", "u_debut"] == 26
+
+
+def test_longueurs_compatibles_postgresql():
+    """PostgreSQL refuse un texte plus long que sa colonne (SQLite l'accepte) : on vérifie tout le référentiel."""
+    from sqlalchemy import String
+    tables = ((modele.salle, referentiel.SALLES), (modele.baie, referentiel.BAIES),
+              (modele.equipement, referentiel.EQUIPEMENTS), (modele.modele_controle, referentiel.controles()),
+              (modele.seuil, [s.__dict__ for s in referentiel.SEUILS]))
+    trop_longs = [(t.name, c.name, r.get(c.name)) for t, lignes in tables for r in lignes for c in t.columns
+                  if isinstance(c.type, String) and c.type.length and isinstance(r.get(c.name), str)
+                  and len(r[c.name]) > c.type.length]
+    assert trop_longs == []

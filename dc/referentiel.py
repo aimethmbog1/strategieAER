@@ -25,7 +25,7 @@ SRC_PLAN = "Plan des baies du FusionModule800 (A1, A2, A3)"
 
 BAIES = [
     {"nom": "A1", "position": "IT Cabinet 01 — 42U", "salle": S},
-    {"nom": "A2", "position": "Converged Cabinet (armoire d'infrastructure) — 42U", "salle": S},
+    {"nom": "A2", "position": "Converged Cabinet — 42U", "salle": S},
     {"nom": "A3", "position": "IT Cabinet 02 — 42U", "salle": S},
 ]
 HAUTEUR_BAIE_U = 42
