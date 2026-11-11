@@ -27,6 +27,7 @@ baie = Table(
     Column("nom", String(80), nullable=False, unique=True),
     Column("position", String(40)),
     Column("puissance_max_kw", Float),
+    Column("hauteur_u", Integer, default=42),
 )
 
 equipement = Table(
@@ -39,6 +40,8 @@ equipement = Table(
     Column("type_controle", String(40)),                            # rattachement aux listes de contrôle : RESEAU, SALLE…
     Column("salle_id", Integer, ForeignKey("dc_salle.id")),
     Column("baie_id", Integer, ForeignKey("dc_baie.id")),
+    Column("u_debut", Integer),                                     # position dans la baie (unités U, du bas)
+    Column("u_fin", Integer),
     Column("fabricant", String(80)),
     Column("modele", String(120)),
     Column("numero_serie", String(120)),
@@ -140,3 +143,7 @@ audit = Table(
     Column("objet_id", String(40)),
     Column("detail", Text),
 )
+
+
+# Colonnes ajoutées après la première version : créées par depot.initialiser() sur une base existante
+COLONNES_AJOUTEES = {"dc_equipement": {"u_debut": "INTEGER", "u_fin": "INTEGER"}, "dc_baie": {"hauteur_u": "INTEGER"}}

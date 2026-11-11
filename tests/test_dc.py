@@ -136,3 +136,28 @@ def test_import_cartographie(base):
     assert len(ip) == 1 and len(cst) == 1
     assert depot.remplacer_donnees_sensibles(ip, cst, "test")["constats_ajoutes"] == 1
     assert depot.remplacer_donnees_sensibles(ip, cst, "test")["constats_ajoutes"] == 0
+
+
+def test_plan_des_baies():
+    eqs = pd.DataFrame(referentiel.EQUIPEMENTS)
+    occ, conflits = analyse.occupation_baies(eqs)
+    assert conflits == []
+    assert set(occ["Baie"]) == {"A1", "A2", "A3"}
+    a2 = eqs[eqs["baie"] == "A2"]
+    assert {"FM800-UPS", "FM800-ECC800", "FM800-AC1", "FM800-AC2", "FM800-PDU"} <= set(a2["code"])
+
+
+def test_renommage_et_completion(monkeypatch):
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    monkeypatch.setattr(depot, "MOTEUR", eng)
+    depot._INIT_FAIT.clear()
+    modele.meta.create_all(eng)
+    from sqlalchemy import insert
+    with eng.begin() as cx:  # base « lot 1 » : ancien code, sans emplacement, avec une saisie utilisateur
+        cx.execute(insert(modele.equipement).values(code="SAN-SNS2624", designation="x", systeme="Réseau",
+                                                    fournisseur="Fournisseur saisi"))
+    depot.initialiser()
+    e = depot.equipements().set_index("code")
+    assert "SAN-SNS2624" not in e.index and e.at["SNS2624-01", "baie"] == "A3"
+    assert e.at["SNS2624-01", "fournisseur"] == "Fournisseur saisi"  # jamais écrasé
+    assert e.at["SNS2624-01", "u_debut"] == 26

@@ -4,7 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from dc import analyse, depot, modele
-from dc.ui import ROLES_GESTION, bandeau, colorer_severite, exiger_lecture, initialiser, peut, style
+from dc.ui import (ROLES_GESTION, STYLE_BAIES, bandeau, colorer_severite, exiger_lecture, html_baie, initialiser,
+                   legende_systemes, peut, style)
 from utils.ui import PAGE_ICON, inject_base_style, kpi_row, render_sidebar_footer, section_title
 
 st.set_page_config(page_title="Data Center — registre des actifs — AER", page_icon=PAGE_ICON, layout="wide")
@@ -28,7 +29,28 @@ kpi_row([("Équipements", str(len(eq)), f"{int(eq['quantite'].fillna(1).sum())} 
          ("Fiches à compléter", str(int(eq["a_completer"].notna().sum())), None),
          ("En panne / dégradés", str(int(eq["etat"].isin(["En panne", "Dégradé"]).sum())), None)])
 
-t_reg, t_fiche, t_manq = st.tabs(["📋 Registre", "🔎 Fiche d'un équipement", "📝 Informations à compléter"])
+t_plan, t_reg, t_fiche, t_manq = st.tabs(["🗄️ Plan des baies", "📋 Registre", "🔎 Fiche d'un équipement",
+                                          "📝 Informations à compléter"])
+
+with t_plan:
+    ec = analyse.ecarts_ouverts(depot.releves())
+    pire_par_eq = ec.groupby("equipement_id")["severite"].agg(lambda s: "Critique" if (s == "Critique").any()
+                                                             else "Avertissement").to_dict() if len(ec) else {}
+    bx = depot.baies().sort_values("nom")
+    st.markdown(STYLE_BAIES + legende_systemes(), unsafe_allow_html=True)
+    st.markdown("<div class='baies'>" + "".join(html_baie(b.nom, b.position or "", eq, pire_par_eq,
+                                                          int(b.hauteur_u or 42)) for b in bx.itertuples()) + "</div>",
+                unsafe_allow_html=True)
+    st.caption("Vue de face, U1 en bas. Survole un équipement pour voir sa désignation et sa position. Un cadre orange ou "
+               "rouge signale un écart d'inspection ouvert. Positions issues du plan des baies du FusionModule800 ; "
+               "modifiables dans le registre (colonnes Baie, U début, U fin).")
+    occ, conflits = analyse.occupation_baies(eq)
+    c1, c2 = st.columns([3, 2])
+    c1.dataframe(occ, hide_index=True, width="stretch")
+    hors = eq[eq["baie"].isna()][["code", "designation"]]
+    if conflits:
+        c2.error("Chevauchements de positions : " + " ; ".join(conflits))
+    c2.markdown("**Hors baie ou emplacement à préciser :** " + ", ".join(hors["code"]))
 
 with t_reg:
     c1, c2, c3, c4 = st.columns(4)
@@ -42,7 +64,7 @@ with t_reg:
             v = v[v[col].isin(val)]
     if fq:
         v = v[v.astype(str).apply(lambda s: s.str.contains(fq, case=False, regex=False)).any(axis=1)]
-    colonnes = ["id", "code", "designation", "systeme", "salle", "baie", "fabricant", "modele", "quantite", "criticite",
+    colonnes = ["id", "code", "designation", "systeme", "salle", "baie", "u_debut", "u_fin", "fabricant", "modele", "quantite", "criticite",
                 "etat", "redondance", "point_unique", "numero_serie", "version", "date_mes", "fin_garantie",
                 "fournisseur", "puissance_w", "alias", "a_completer", "observations", "source"]
     config = {"id": None,
@@ -50,7 +72,9 @@ with t_reg:
               "designation": st.column_config.TextColumn("Désignation", required=True, width="large"),
               "systeme": st.column_config.SelectboxColumn("Système", options=modele.SYSTEMES, required=True),
               "salle": st.column_config.TextColumn("Salle", disabled=True),
-              "baie": st.column_config.TextColumn("Baie", disabled=True),
+              "baie": st.column_config.SelectboxColumn("Baie", options=sorted(depot.baies()["nom"])),
+              "u_debut": st.column_config.NumberColumn("U début", min_value=1, max_value=42, step=1),
+              "u_fin": st.column_config.NumberColumn("U fin", min_value=1, max_value=42, step=1),
               "criticite": st.column_config.SelectboxColumn("Criticité", options=modele.CRITICITES),
               "etat": st.column_config.SelectboxColumn("État", options=modele.ETATS),
               "point_unique": st.column_config.SelectboxColumn("Point unique", options=["Oui", "Non", "À confirmer"]),
@@ -69,7 +93,7 @@ with t_reg:
         if ed["code"].duplicated().any() or ed["code"].isin(eq.loc[~eq["id"].isin(v["id"]), "code"]).any():
             st.error("Deux équipements ne peuvent pas avoir le même code.")
         else:
-            n = depot.modifier_equipements(eq, ed.drop(columns=["salle", "baie"]))
+            n = depot.modifier_equipements(eq, ed.drop(columns=["salle"]))
             st.session_state["_dca_ok"] = f"{n} équipement(s) créé(s) ou modifié(s) ; modifications tracées dans le journal d'audit."
             st.rerun()
     buf = io.BytesIO()
@@ -94,7 +118,8 @@ with t_fiche:
 - Fabricant / modèle : {e['fabricant'] or '—'} {e['modele'] or ''} · Quantité : {int(e['quantite'] or 1)}
 - N° de série : {e['numero_serie'] or '—'} · Version : {e['version'] or '—'}
 - Redondance : {e['redondance'] or '—'} · Point unique de défaillance : {e['point_unique']}""")
-    c2.markdown(f"""- Salle : {e['salle'] or '—'} · Baie : {e['baie'] or '**à compléter**'}
+    pos = f" · U{int(e['u_debut'])}–U{int(e['u_fin'])}" if pd.notna(e['u_debut']) else ""
+    c2.markdown(f"""- Salle : {e['salle'] or '—'} · Baie : {e['baie'] or '**à compléter**'}{pos}
 - Mise en service : {pd.Timestamp(e['date_mes']).strftime('%d/%m/%Y') if pd.notna(e['date_mes']) else '—'} ·
   Fin de garantie : {pd.Timestamp(e['fin_garantie']).strftime('%d/%m/%Y') if pd.notna(e['fin_garantie']) else '—'}
 - Fournisseur : {e['fournisseur'] or '—'} · Alias : {e['alias'] or '—'}

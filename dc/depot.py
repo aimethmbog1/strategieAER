@@ -49,28 +49,61 @@ def tracer(cx, action: str, objet: str, objet_id=None, detail=None) -> None:
 _INIT_FAIT: set = set()
 
 
+def _ajouter_colonnes(eng) -> None:
+    from sqlalchemy import inspect, text
+    insp = inspect(eng)
+    with eng.begin() as cx:
+        for tab, cols in m.COLONNES_AJOUTEES.items():
+            existantes = {c["name"] for c in insp.get_columns(tab)}
+            for col, typ in cols.items():
+                if col not in existantes:
+                    cx.execute(text(f"ALTER TABLE {tab} ADD COLUMN {col} {typ}"))
+
+
 def initialiser() -> dict:
-    """Crée les tables manquantes et charge le contenu initial s'il est absent (idempotent)."""
+    """Crée les tables (et colonnes) manquantes et complète le contenu initial (idempotent, non destructif :
+    une information déjà saisie n'est jamais écrasée)."""
     eng = moteur()
     cle = str(eng.url)
     if cle in _INIT_FAIT:
         return {}
     m.meta.create_all(eng)
+    _ajouter_colonnes(eng)
     bilan = {}
     with eng.begin() as cx:
-        if not cx.execute(select(m.salle.c.id).limit(1)).first():
-            for s in ref.SALLES:
+        noms_salles = {r[0] for r in cx.execute(select(m.salle.c.nom)).all()}
+        for s in ref.SALLES:
+            if s["nom"] not in noms_salles:
                 cx.execute(insert(m.salle).values(**s))
-            bilan["salles"] = len(ref.SALLES)
+                bilan["salles"] = bilan.get("salles", 0) + 1
         salles = dict(cx.execute(select(m.salle.c.nom, m.salle.c.id)).all())
+        noms_baies = {r[0] for r in cx.execute(select(m.baie.c.nom)).all()}
+        for b in ref.BAIES:
+            if b["nom"] not in noms_baies:
+                cx.execute(insert(m.baie).values(nom=b["nom"], position=b["position"], salle_id=salles.get(b["salle"]),
+                                                 hauteur_u=ref.HAUTEUR_BAIE_U))
+                bilan["baies"] = bilan.get("baies", 0) + 1
+        baies = dict(cx.execute(select(m.baie.c.nom, m.baie.c.id)).all())
         codes = {r[0] for r in cx.execute(select(m.equipement.c.code)).all()}
-        nouveaux = [e for e in ref.EQUIPEMENTS if e["code"] not in codes]
-        for e in nouveaux:
+        for ancien, nouveau in ref.RENOMMAGES.items():
+            if ancien in codes and nouveau not in codes:
+                cx.execute(update(m.equipement).where(m.equipement.c.code == ancien).values(code=nouveau))
+                tracer(cx, "renommage", "equipement", nouveau, {"ancien code": ancien})
+                codes = (codes - {ancien}) | {nouveau}
+        existants = {r.code: r for r in cx.execute(select(m.equipement)).all()}
+        for e in ref.EQUIPEMENTS:
             v = {k: e.get(k) for k in m.equipement.c.keys() if k in e}
             v["salle_id"] = salles.get(e.get("salle"))
-            cx.execute(insert(m.equipement).values(**v))
-        if nouveaux:
-            bilan["equipements"] = len(nouveaux)
+            v["baie_id"] = baies.get(e.get("baie"))
+            if e["code"] not in existants:
+                cx.execute(insert(m.equipement).values(**v))
+                bilan["equipements"] = bilan.get("equipements", 0) + 1
+            else:  # complète seulement les champs encore vides
+                x = existants[e["code"]]
+                comp = {k: val for k, val in v.items() if val not in (None, "") and getattr(x, k, None) in (None, "")}
+                if comp:
+                    cx.execute(update(m.equipement).where(m.equipement.c.code == e["code"]).values(**comp))
+                    bilan["completes"] = bilan.get("completes", 0) + 1
         if not cx.execute(select(m.seuil.c.grandeur).limit(1)).first():
             for s in ref.SEUILS:
                 cx.execute(insert(m.seuil).values(**s.__dict__))
@@ -205,8 +238,32 @@ def enregistrer_inspection(equipement_id: int, inspecteur: str, frequence: str |
     return iid, bilan
 
 
+def _norm(x):
+    """Valeur comparable : vide → None, nombres → float, dates → texte ISO."""
+    if x is None or (not isinstance(x, (str, bytes)) and pd.isna(x)):
+        return None
+    if isinstance(x, str):
+        return x.strip() or None
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        return float(x)
+    if isinstance(x, (datetime, pd.Timestamp)):
+        return pd.Timestamp(x).isoformat()
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return str(x)
+
+
 def modifier_equipements(avant: pd.DataFrame, apres: pd.DataFrame) -> int:
     """Applique les modifications du registre (comparaison ligne à ligne) ; ajoute les nouvelles lignes."""
+    apres = apres.copy()
+    if "baie" in apres.columns:
+        ids_baies = dict(zip(baies()["nom"], baies()["id"])) if len(baies()) else {}
+        apres["baie_id"] = apres["baie"].map(ids_baies)
+        apres = apres.drop(columns="baie")
+    for c in ("u_debut", "u_fin", "quantite"):
+        if c in apres.columns:
+            apres[c] = pd.to_numeric(apres[c], errors="coerce").astype("Int64").astype(object)
     cols = [c for c in m.equipement.c.keys() if c != "id" and c in apres.columns]
     nb = 0
     with moteur().begin() as cx:
@@ -226,7 +283,7 @@ def modifier_equipements(avant: pd.DataFrame, apres: pd.DataFrame) -> int:
                 ident = int(r["id"])
                 anc = index_avant.loc[ident] if ident in index_avant.index else None
                 diff = {c: (None if anc is None else anc.get(c), v[c]) for c in cols
-                        if anc is None or str(anc.get(c)) != str(v[c]) and not (pd.isna(anc.get(c)) and v[c] is None)}
+                        if anc is None or _norm(anc.get(c)) != _norm(v[c])}
                 if diff:
                     cx.execute(update(m.equipement).where(m.equipement.c.id == ident).values(**{c: v[c] for c in diff}))
                     tracer(cx, "modification", "equipement", v.get("code") or ident,

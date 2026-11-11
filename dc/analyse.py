@@ -69,3 +69,19 @@ def indicateurs(plan: pd.DataFrame, rel: pd.DataFrame, depuis: datetime) -> dict
             "respect_plan": taux_respect_plan(len(plan), int(plan["en_retard"].sum()) if len(plan) else 0),
             "conformite": taux_conformite(r["severite"]) if len(r) else None,
             "inspections": int(r["inspection_id"].nunique()) if len(r) else 0}
+
+
+def occupation_baies(eq: pd.DataFrame, hauteur: int = 42) -> tuple[pd.DataFrame, list[str]]:
+    """Unités occupées et libres par baie, et chevauchements de positions (erreurs de saisie)."""
+    lignes, conflits = [], []
+    p = eq[eq["baie"].notna() & eq["u_debut"].notna() & eq["u_fin"].notna()]
+    for b, g in p.groupby("baie"):
+        occ = {}
+        for r in g.itertuples():
+            for u in range(int(r.u_debut), int(r.u_fin) + 1):
+                if u in occ:
+                    conflits.append(f"Baie {b}, U{u} : {occ[u]} et {r.code}")
+                occ[u] = r.code
+        lignes.append({"Baie": b, "Équipements": len(g), "U occupés": len(occ), "U libres": hauteur - len(occ),
+                       "Taux d'occupation (%)": round(100 * len(occ) / hauteur, 1)})
+    return pd.DataFrame(lignes), conflits
