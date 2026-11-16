@@ -38,6 +38,7 @@ MENU = {
         P("2_", "Parc solaire", "🛰️"),
         P("4_", "Répartition régionale", "🌍"),
         P("23_", "GMAO — Maintenance", "🔧"),
+        P("26_", "Suivi de la maintenance", "🛠️"),
         P("17_", "Supervision des centrales", "📡"),
         P("24_", "FusionSolar en ligne", "☀️"),
     ],
