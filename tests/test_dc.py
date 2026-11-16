@@ -72,8 +72,8 @@ def test_referentiel():
 
 
 @pytest.fixture()
-def base(monkeypatch):
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+def base(monkeypatch, moteur_dc):
+    eng = moteur_dc
     monkeypatch.setattr(depot, "MOTEUR", eng)
     depot._INIT_FAIT.clear()
     depot.initialiser()

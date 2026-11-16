@@ -23,7 +23,11 @@ if st.session_state.get("_dci_ok"):
     b = st.session_state.pop("_dci_ok")
     (st.error if b["Critique"] else st.warning if b["Avertissement"] else st.success)(
         f"Inspection n° {b['id']} enregistrée : {b['OK']} conforme(s), {b['Avertissement']} avertissement(s), "
-        f"{b['Critique']} écart(s) critique(s).")
+        f"{b['Critique']} écart(s) critique(s)."
+        + (lambda x: (f" Alertes : {x['créées']} émise(s), {x['aggravées']} aggravée(s), {x['résolues']} résolue(s)."
+                      if x and any(x.values()) else ""))(b.get("alertes")))
+    if b.get("alertes_erreur"):
+        st.error("L'inspection est enregistrée, mais la mise à jour des alertes a échoué : " + b["alertes_erreur"])
 
 auj = depot.maintenant()
 eq = depot.equipements()

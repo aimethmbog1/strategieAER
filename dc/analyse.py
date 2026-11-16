@@ -45,21 +45,27 @@ def plan_controles(eq: pd.DataFrame, ctl: pd.DataFrame, rel: pd.DataFrame, maint
     return pd.DataFrame(lignes)
 
 
-def etat_systemes(eq: pd.DataFrame, ecarts: pd.DataFrame, systemes: list[str]) -> pd.DataFrame:
-    """Pire sévérité des écarts ouverts par système, et équipements en panne ou dégradés."""
+def etat_systemes(eq: pd.DataFrame, ecarts: pd.DataFrame, systemes: list[str],
+                  alertes: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Pire sévérité par système : écarts d'inspection ouverts, alertes en cours (y compris signalées à la main)
+    et équipements en panne ou dégradés."""
     lignes = []
     for s in systemes:
         e = eq[eq["systeme"] == s]
         ids = set(e["id"])
         ec = ecarts[ecarts["equipement_id"].isin(ids)] if len(ecarts) else ecarts
         sev = pire(list(ec["severite"]) if len(ec) else [])
+        al = alertes[alertes["systeme"] == s] if alertes is not None and len(alertes) else None
+        if al is not None and len(al):
+            sev = pire([sev] + list(al["severite"]))
         if (e["etat"] == "En panne").any():
             sev = pire([sev, "Critique"])
         elif (e["etat"] == "Dégradé").any():
             sev = pire([sev, "Avertissement"])
         lignes.append({"Système": s, "Équipements": len(e), "Écarts ouverts": len(ec),
+                       "Alertes en cours": 0 if al is None else len(al),
                        "En panne / dégradés": int(e["etat"].isin(["En panne", "Dégradé"]).sum()),
-                       "Informations à compléter": int(e["a_completer"].notna().sum()), "État": sev if len(e) else "—"})
+                       "Informations à compléter": int(e["a_completer"].notna().sum()), "État": sev if len(e) or (al is not None and len(al)) else "—"})
     return pd.DataFrame(lignes)
 
 

@@ -145,9 +145,125 @@ audit = Table(
 )
 
 
+# ============================================================================= lot 2
+# Alertes, escalade, notifications, main courante, passation de consignes, annuaire.
+
+STATUTS_ALERTE = ["Ouverte", "Acquittée", "Résolue"]
+ORIGINES_ALERTE = ["Inspection", "Manuelle"]
+SEVERITES_ALERTE = ["Information", "Avertissement", "Critique"]
+# Niveaux d'escalade : chaque contact de l'annuaire est rattaché à un niveau (0 = ne reçoit pas d'alerte).
+NIVEAUX = {1: "Niveau 1 — Technicien / astreinte", 2: "Niveau 2 — Responsable du Data Center",
+           3: "Niveau 3 — Sous-directeur et Direction"}
+TYPES_CONTACT = ["Interne AER", "Fournisseur", "Prestataire de maintenance", "Opérateur télécom", "Secours / urgence",
+                 "Autre"]
+CATEGORIES_EVENEMENT = ["Observation", "Incident", "Intervention", "Maintenance", "Visite / accès", "Consigne",
+                        "Alerte", "Passation", "Rectificatif"]
+POSTES = ["Journée", "Matin", "Après-midi", "Nuit", "Astreinte", "Week-end"]
+CANAUX = ["Courriel", "Telegram"]
+
+contact = Table(
+    "dc_contact", meta,
+    Column("id", Integer, primary_key=True),
+    Column("nom", String(120), nullable=False),
+    Column("fonction", String(160)),
+    Column("organisation", String(160)),
+    Column("type", String(40), default="Interne AER"),
+    Column("systeme", String(60), default="Tous"),          # système couvert, ou « Tous »
+    Column("niveau", Integer, default=0),                    # niveau d'escalade (0 : aucune alerte)
+    Column("severite_min", String(20), default="Avertissement"),
+    Column("courriel", String(160)),
+    Column("telephone", String(60)),
+    Column("telegram_id", String(40)),                       # identifiant de conversation Telegram (chat_id)
+    Column("par_courriel", Boolean, default=True),
+    Column("par_telegram", Boolean, default=False),
+    Column("actif", Boolean, default=True),
+    Column("observations", Text),
+)
+
+regle_escalade = Table(
+    "dc_regle_escalade", meta,
+    Column("id", Integer, primary_key=True),
+    Column("severite", String(20), nullable=False),
+    Column("delai_min", Integer, nullable=False),            # délai sans acquittement depuis l'émission
+    Column("niveau", Integer, nullable=False),               # niveau de contacts notifié
+    Column("actif", Boolean, default=True),
+    UniqueConstraint("severite", "niveau", name="uq_dc_regle_escalade"),
+)
+
+alerte = Table(
+    "dc_alerte", meta,
+    Column("id", Integer, primary_key=True),
+    Column("emise", DateTime, nullable=False),
+    Column("severite", String(20), nullable=False),
+    Column("systeme", String(60)),
+    Column("equipement_id", Integer, ForeignKey("dc_equipement.id")),
+    Column("controle_id", Integer, ForeignKey("dc_modele_controle.id")),   # alerte née d'un contrôle d'inspection
+    Column("releve_id", Integer),
+    Column("origine", String(20), nullable=False, default="Manuelle"),
+    Column("titre", String(300), nullable=False),
+    Column("description", Text),
+    Column("statut", String(20), nullable=False, default="Ouverte"),
+    Column("niveau_notifie", Integer, default=0),            # dernier niveau d'escalade notifié
+    Column("acquittee", DateTime),
+    Column("acquittee_par", String(120)),
+    Column("commentaire_acquittement", Text),
+    Column("resolue", DateTime),
+    Column("resolue_par", String(120)),
+    Column("resolution", Text),
+    Column("auteur", String(80)),
+)
+
+notification = Table(
+    "dc_notification", meta,
+    Column("id", Integer, primary_key=True),
+    Column("horodatage", DateTime, nullable=False),
+    Column("alerte_id", Integer),
+    Column("evenement_id", Integer),
+    Column("niveau", Integer),
+    Column("canal", String(20)),
+    Column("destinataire", String(160)),
+    Column("statut", String(30), nullable=False),            # Envoyée / Échec / Canal non configuré / Aucun destinataire
+    Column("detail", Text),
+)
+
+evenement = Table(          # main courante : journal partagé, en ajout seul (jamais modifié ni supprimé)
+    "dc_evenement", meta,
+    Column("id", Integer, primary_key=True),
+    Column("horodatage", DateTime, nullable=False),
+    Column("categorie", String(30), nullable=False),
+    Column("severite", String(20), default="Information"),
+    Column("systeme", String(60)),
+    Column("equipement_id", Integer, ForeignKey("dc_equipement.id")),
+    Column("alerte_id", Integer),
+    Column("rectifie_id", Integer),                          # entrée corrigée par ce rectificatif
+    Column("description", Text, nullable=False),
+    Column("auteur", String(80)),
+    Column("auteur_nom", String(120)),
+    Column("automatique", Boolean, default=False),
+)
+
+passation = Table(
+    "dc_passation", meta,
+    Column("id", Integer, primary_key=True),
+    Column("horodatage", DateTime, nullable=False),
+    Column("poste", String(30)),
+    Column("sortant", String(120), nullable=False),
+    Column("entrant", String(120)),
+    Column("etat_general", String(20)),
+    Column("situation", Text),                               # photographie automatique : alertes, écarts, retards
+    Column("faits_marquants", Text),
+    Column("travaux_en_cours", Text),
+    Column("consignes", Text),
+    Column("acceptee", DateTime),
+    Column("acceptee_par", String(120)),
+    Column("reserves", Text),
+    Column("auteur", String(80)),
+)
+
+
 # Version du schéma et du référentiel : à incrémenter à chaque évolution, pour forcer la mise à jour de la base
 # même si l'application n'a pas redémarré (le cache de Streamlit conserve sinon l'ancienne initialisation).
-VERSION_SCHEMA = "2026-11-11.3"
+VERSION_SCHEMA = "2026-11-16.1"
 
 # Colonnes ajoutées après la première version : créées par depot.initialiser() sur une base existante
 COLONNES_AJOUTEES = {"dc_equipement": {"u_debut": "INTEGER", "u_fin": "INTEGER"}, "dc_baie": {"hauteur_u": "INTEGER"}}

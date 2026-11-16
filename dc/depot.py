@@ -116,6 +116,10 @@ def initialiser() -> dict:
                     a_signaler=c["a_signaler"], frequence=c["frequence"], grandeur=c["grandeur"], source=c["source"],
                     actif=True))
             bilan["controles"] = len(ctl)
+        from . import exploitation
+        n = exploitation.initialiser_regles(cx)
+        if n:
+            bilan["regles_escalade"] = n
         if bilan:
             tracer(cx, "initialisation", "module", detail=bilan)
     _INIT_FAIT.add(cle)
@@ -235,6 +239,13 @@ def enregistrer_inspection(equipement_id: int, inspecteur: str, frequence: str |
                                                photo_b64=l.get("photo_b64")))
         bilan = {k: sum(1 for l in lignes if l["severite"] == k) for k in ("OK", "Avertissement", "Critique")}
         tracer(cx, "inspection", "equipement", crit[1] if crit else equipement_id, {"inspection": iid, **bilan})
+    # lot 2 : les écarts deviennent des alertes (ou les résolvent), puis le premier niveau est notifié
+    from . import exploitation
+    try:
+        bilan["alertes"] = exploitation.synchroniser_alertes()
+        exploitation.traiter_escalades()
+    except Exception as e:  # noqa: BLE001 — l'inspection est déjà enregistrée ; une alerte en échec ne doit pas la perdre
+        bilan["alertes_erreur"] = f"{type(e).__name__} : {e}"
     return iid, bilan
 
 

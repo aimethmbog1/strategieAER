@@ -110,3 +110,74 @@ def autonomie_estimee_min(energie_wh: float, charge_w: float, profondeur: float 
     if not charge_w or charge_w <= 0:
         return None
     return round(60 * energie_wh * profondeur * rendement / charge_w, 0)
+
+
+# ============================================================================= lot 2 : alertes et escalade
+@dataclass(frozen=True)
+class Palier:
+    """Palier d'escalade : passé `delai_min` minutes sans acquittement, les contacts du `niveau` sont notifiés."""
+    severite: str
+    delai_min: int
+    niveau: int
+
+
+# Délais validés le 11/11/2026 : critique 15 min puis 30 min ; avertissement 4 h. Le niveau 1 est notifié à l'émission.
+PALIERS_DEFAUT = [
+    Palier("Critique", 0, 1), Palier("Critique", 15, 2), Palier("Critique", 30, 3),
+    Palier("Avertissement", 0, 1), Palier("Avertissement", 240, 2),
+]
+
+
+def paliers_dus(severite: str, emise: datetime, acquittee: datetime | None, resolue: datetime | None,
+                maintenant: datetime, deja_notifie: int = 0, paliers=PALIERS_DEFAUT) -> list[Palier]:
+    """Paliers à notifier maintenant : ceux de la sévérité dont le délai est écoulé et dont le niveau n'a pas
+    encore été notifié. Une alerte acquittée ou résolue n'est plus escaladée."""
+    if acquittee is not None or resolue is not None:
+        return []
+    ecoule = (maintenant - emise).total_seconds() / 60
+    dus = [p for p in paliers if p.severite == severite and ecoule >= p.delai_min and p.niveau > (deja_notifie or 0)]
+    return sorted(dus, key=lambda p: p.niveau)
+
+
+def prochain_palier(severite: str, emise: datetime, deja_notifie: int = 0, paliers=PALIERS_DEFAUT) -> tuple[Palier, datetime] | None:
+    """Prochain palier non encore notifié et son heure de déclenchement (None s'il n'en reste pas)."""
+    suivants = sorted((p for p in paliers if p.severite == severite and p.niveau > (deja_notifie or 0)),
+                      key=lambda p: p.niveau)
+    if not suivants:
+        return None
+    return suivants[0], emise + timedelta(minutes=suivants[0].delai_min)
+
+
+def destinataire_concerne(niveau_contact: int | None, severite_min: str | None, systeme_contact: str | None,
+                          actif: bool, niveau: int, severite: str, systeme: str | None) -> bool:
+    """Un contact reçoit la notification d'un palier s'il est actif, rattaché à ce niveau, si la sévérité atteint
+    son seuil personnel et si l'alerte concerne son système (« Tous » ou vide = tous les systèmes)."""
+    if not actif or (niveau_contact or 0) != niveau:
+        return False
+    if ORDRE.get(severite, 0) < ORDRE.get(severite_min or "Avertissement", 2):
+        return False
+    return (systeme_contact or "Tous") == "Tous" or systeme is None or systeme_contact == systeme
+
+
+def severite_alerte_fusion(actuelle: str, nouvelle: str) -> str:
+    """Une alerte ouverte ne peut que s'aggraver : on retient la plus grave des deux sévérités."""
+    return max(actuelle, nouvelle, key=lambda x: ORDRE.get(x, 0))
+
+
+def delai_moyen_min(debuts, fins) -> float | None:
+    """Moyenne (en minutes) des délais entre deux séries d'horodatages ; les couples incomplets sont ignorés.
+    Sert au délai moyen d'acquittement et au délai moyen de résolution."""
+    d = [(f - a).total_seconds() / 60 for a, f in zip(debuts, fins) if a is not None and f is not None and f >= a]
+    return None if not d else round(sum(d) / len(d), 1)
+
+
+def format_duree(minutes: float | None) -> str:
+    """Durée lisible : « 12 min », « 3 h 05 », « 2 j 4 h »."""
+    if minutes is None:
+        return "—"
+    m = int(round(minutes))
+    if m < 60:
+        return f"{m} min"
+    if m < 1440:
+        return f"{m // 60} h {m % 60:02d}"
+    return f"{m // 1440} j {(m % 1440) // 60} h"

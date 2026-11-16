@@ -1,6 +1,7 @@
 import streamlit as st
 
-from dc import depot, imports, modele
+from dc import depot, exploitation as ex, imports, modele, notifications
+from dc.regles import format_duree
 from dc.ui import ROLES_GESTION, ROLES_SENSIBLE, bandeau, exiger_lecture, initialiser, peut, style
 from utils.ui import PAGE_ICON, inject_base_style, render_sidebar_footer
 
@@ -9,7 +10,8 @@ inject_base_style()
 exiger_lecture()
 initialiser()
 style()
-bandeau("Paramètres du module Data Center", "Seuils d'alerte, listes de contrôle, données sensibles et journal d'audit")
+bandeau("Paramètres du module Data Center",
+        "Seuils d'alerte, listes de contrôle, escalade des alertes, données sensibles et journal d'audit")
 
 if st.session_state.get("_dcp_ok"):
     st.success("💾 " + st.session_state.pop("_dcp_ok"))
@@ -21,7 +23,8 @@ def ok(msg):
     st.rerun()
 
 
-t_s, t_c, t_sens, t_aud = st.tabs(["🎚️ Seuils", "✅ Listes de contrôle", "🔐 Cartographie et constats", "🧾 Journal d'audit"])
+t_s, t_c, t_esc, t_sens, t_aud = st.tabs(["🎚️ Seuils", "✅ Listes de contrôle", "📣 Escalade et notifications",
+                                              "🔐 Cartographie et constats", "🧾 Journal d'audit"])
 
 with t_s:
     st.caption("Une mesure hors de la plage d'avertissement crée un avertissement ; hors de la plage critique, un écart "
@@ -59,6 +62,54 @@ with t_c:
     if gestion and st.button("💾 Enregistrer", key="dcp_c_ok"):
         depot.modifier_controles(ed)
         ok("Listes de contrôle mises à jour.")
+
+with t_esc:
+    st.caption("Une alerte non acquittée est notifiée niveau par niveau. Le délai se compte depuis l'émission de "
+               "l'alerte ; 0 signifie « dès l'émission ». L'acquittement arrête l'escalade. Délais validés le "
+               "11/11/2026 : critique 15 min puis 30 min, avertissement 4 h. Une simple information n'est jamais notifiée.")
+    rg = ex.regles_df()
+    rg["Destinataires"] = rg["niveau"].map(modele.NIVEAUX)
+    rg["Contacts actifs"] = [len(ex.destinataires(int(r.niveau), r.severite, None)) for r in rg.itertuples()]
+    ed = st.data_editor(rg[["id", "severite", "niveau", "Destinataires", "delai_min", "actif", "Contacts actifs"]],
+                        hide_index=True, width="stretch", key="dcp_esc",
+                        disabled=True if not gestion else ["id", "severite", "niveau", "Destinataires", "Contacts actifs"],
+                        column_config={"id": None, "severite": "Sévérité", "niveau": "Niveau",
+                                       "delai_min": st.column_config.NumberColumn("Délai sans acquittement (min)", min_value=0, step=5),
+                                       "actif": st.column_config.CheckboxColumn("Actif")})
+    if gestion and st.button("💾 Enregistrer les règles d'escalade", key="dcp_esc_ok"):
+        try:
+            ex.modifier_regles(ed)
+            ok("Règles d'escalade enregistrées.")
+        except ValueError as e:
+            st.error(str(e))
+    if (rg["Contacts actifs"] == 0).any():
+        st.warning("Certains niveaux n'ont aucun contact actif : leurs notifications ne partiront pas. Annuaire **à "
+                   "compléter** dans « Main courante et passation → Annuaire ».")
+    st.markdown("**Canaux d'envoi**")
+    for canal, actif in notifications.canaux_configures().items():
+        st.markdown(f"- {'🟢' if actif else '⚪'} **{canal}** : {'configuré' if actif else 'non configuré'}")
+    with st.expander("Comment configurer le courriel et Telegram"):
+        st.markdown("""Les identifiants d'envoi ne sont jamais écrits dans le code ni dans le dépôt GitHub. Ils se déclarent dans
+*Manage app → Settings → Secrets* (Streamlit Cloud) :
+
+```toml
+[smtp]
+host = "smtp.exemple.cm"
+port = 587
+user = "alertes@exemple.cm"
+password = "…"
+expediteur = "Data Center AER <alertes@exemple.cm>"
+
+[telegram]
+bot_token = "123456:ABC…"
+
+[dc]
+url = "https://strategiedeploiementaer.streamlit.app/DC_Alertes"
+```
+
+**Telegram** : créer un bot avec @BotFather (il fournit le jeton) ; chaque destinataire écrit une fois au bot, puis son
+identifiant de conversation se lit à l'adresse `https://api.telegram.org/bot<jeton>/getUpdates` (champ `chat.id`) et se
+saisit dans l'annuaire. Pour un groupe, ajouter le bot au groupe et saisir l'identifiant du groupe.""")
 
 with t_sens:
     if not peut(ROLES_SENSIBLE):

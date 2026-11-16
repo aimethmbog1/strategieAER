@@ -4,8 +4,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from dc import analyse, depot, modele
-from dc.regles import autonomie_estimee_min
+from dc import analyse, depot, exploitation as ex, modele
+from dc.regles import autonomie_estimee_min, format_duree
 from dc.ui import (COULEURS, ICONES, ROLES_SENSIBLE, bandeau, colorer_severite, exiger_lecture, initialiser, peut, style)
 from utils.ui import PAGE_ICON, inject_base_style, kpi_row, plotly_base_layout, render_sidebar_footer, section_title
 
@@ -19,9 +19,17 @@ auj = depot.maintenant()
 bandeau("Data Center FM800 — tableau de bord",
         f"Huawei FusionModule800 · salle des serveurs · situation au {auj:%d/%m/%Y à %H:%M} (heure de Douala)")
 
+try:  # écarts d'inspection → alertes, puis paliers d'escalade échus
+    ex.synchroniser_alertes()
+    ex.traiter_escalades()
+except Exception as e:  # noqa: BLE001 — le tableau de bord doit rester consultable
+    st.error(f"La mise à jour automatique des alertes a échoué : {type(e).__name__} — {e}")
+
 eq = depot.equipements()
 ctl = depot.controles()
 rel = depot.releves()
+alertes_enc = ex.alertes_en_cours()
+nb_non_acq = int((alertes_enc["statut"] == "Ouverte").sum()) if len(alertes_enc) else 0
 ec = analyse.ecarts_ouverts(rel)
 plan = analyse.plan_controles(eq, ctl, rel, auj)
 ind = analyse.indicateurs(plan, rel, auj - timedelta(days=30))
@@ -30,8 +38,9 @@ batt = eq[eq["code"] == "FM800-BATT"]
 charge = eq.loc[eq["puissance_w"].notna(), "puissance_w"].mul(eq["quantite"].fillna(1)).sum()
 kpi_row([
     ("Équipements suivis", str(len(eq)), f"{int(eq['a_completer'].notna().sum())} fiches à compléter"),
-    ("Écarts critiques", str(int((ec['severite'] == 'Critique').sum()) if len(ec) else 0), None),
-    ("Avertissements", str(int((ec['severite'] == 'Avertissement').sum()) if len(ec) else 0), None),
+    ("Alertes en cours", str(len(alertes_enc)), f"{nb_non_acq} non acquittée(s)"),
+    ("Écarts d'inspection", str(len(ec)),
+     f"{int((ec['severite'] == 'Critique').sum()) if len(ec) else 0} critique(s)"),
     ("Contrôles en retard", f"{ind['en_retard']} / {ind['controles']}",
      f"respect du plan : {ind['respect_plan']:.1f} %".replace(".", ",") if ind["respect_plan"] is not None else None),
     ("Conformité (30 jours)", f"{ind['conformite']:.1f} %".replace(".", ",") if ind["conformite"] is not None else "—",
@@ -39,15 +48,39 @@ kpi_row([
     ("Autonomie onduleur", "90 min", "mesurée le 13/07/2026 (≈ 5,2 kW)"),
 ])
 
+# ----------------------------------------------------------------------------- alertes en cours et consignes
+if len(alertes_enc):
+    section_title("ALERTES EN COURS")
+    codes_eq = dict(zip(eq["id"], eq["code"]))
+    va = alertes_enc.head(8).assign(
+        Équipement=lambda d: d["equipement_id"].map(codes_eq),
+        Depuis=lambda d: d["emise"].map(lambda x: format_duree((auj - x.to_pydatetime()).total_seconds() / 60)),
+        Suivi=lambda d: [f"Acquittée par {p}" if st_ == "Acquittée" else f"NON ACQUITTÉE (niveau {int(n or 0)} notifié)"
+                         for st_, p, n in zip(d["statut"], d["acquittee_par"], d["niveau_notifie"])])
+    st.dataframe(va[["severite", "id", "titre", "Équipement", "Depuis", "Suivi"]].rename(columns={
+        "severite": "Sévérité", "id": "N°", "titre": "Objet"}).style.map(colorer_severite, subset=["Sévérité"]),
+        hide_index=True, width="stretch", column_config={"Objet": st.column_config.TextColumn(width="large")})
+    try:
+        st.page_link("vues/34_🖥️_DC_Alertes.py", label="Ouvrir le centre d'alertes", icon="🚨")
+    except Exception:  # noqa: BLE001 — hors navigation (tests)
+        pass
+pas = ex.passations(1)
+if len(pas):
+    p0 = pas.iloc[0]
+    prise = "en attente de prise de poste" if pd.isna(p0["acceptee"]) else f"prise en compte par {p0['acceptee_par']}"
+    st.info(f"🔄 **Dernière passation** ({p0['horodatage']:%d/%m/%Y à %H:%M}, {p0['sortant']} → {p0['entrant'] or '—'}, {prise}) — "
+            f"consignes : {p0['consignes'] or '—'}")
+
 # ----------------------------------------------------------------------------- état par système
 section_title("ÉTAT PAR SYSTÈME")
-etat = analyse.etat_systemes(eq, ec, modele.SYSTEMES)
+etat = analyse.etat_systemes(eq, ec, modele.SYSTEMES, alertes_enc)
 cols = st.columns(4)
 for i, r in etat.iterrows():
     with cols[i % 4]:
         sev = r["État"]
         st.markdown(f"<div class='dc-sys' style='background:{COULEURS.get(sev, '#9CA3AF')}'><b>{ICONES.get(sev, '⚪')} "
-                    f"{r['Système']}</b><span>{r['Équipements']} équipement(s) · {r['Écarts ouverts']} écart(s) ouvert(s)"
+                    f"{r['Système']}</b><span>{r['Équipements']} équipement(s) · {r['Alertes en cours']} alerte(s) · "
+                    f"{r['Écarts ouverts']} écart(s)"
                     f"<br>{r['En panne / dégradés']} en panne ou dégradé(s) · {r['Informations à compléter']} à compléter"
                     f"</span></div>", unsafe_allow_html=True)
         st.write("")
