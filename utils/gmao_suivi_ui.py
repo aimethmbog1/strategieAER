@@ -506,3 +506,269 @@ def onglet_arrets(sites: pd.DataFrame, occurrences: pd.DataFrame, equipes: list[
     buf = io.BytesIO()
     vue.to_excel(buf, index=False)
     st.download_button("⬇️ Exporter l'historique (Excel)", buf.getvalue(), "arrets_declares.xlsx", key="sma_dl")
+
+
+# ============================================================================= VISITES
+def onglet_visites(sites: pd.DataFrame, visites: pd.DataFrame, f: pd.DataFrame, auj: pd.Timestamp) -> None:
+    _flash("_smv_ok")
+    infos = sites.drop_duplicates("cle_site").set_index("cle_site")
+    perimetre_tot = set(sites.loc[sites["etat"].map(gi.GROUPE).isin(["En service H24", "Service partiel", "À l'arrêt"]), "cle_site"])
+    eq = gs.equipes()
+    chefs_connus = sorted({str(x) for x in list(visites["chef"].dropna()) + list(eq["chef"].dropna())}, key=str.lower)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Enregistrer une visite de site**")
+        if not peut_modifier():
+            st.info("🔒 Votre profil ne permet pas d'enregistrer une visite.")
+        else:
+            v = st.session_state.get("_smv_n", 0)
+            s = sites.sort_values("site")
+            lib = dict(zip(s["cle_site"], s["site"] + " (" + s["phase"].astype(str) + ", " + s["region"].astype(str) + ")"))
+            with st.form(f"smv_new_{v}"):
+                c = st.columns(2)
+                k = c[0].selectbox("Site *", list(lib), format_func=lib.get, index=None, key=f"smv_site_{v}", placeholder="Nom de la centrale…")
+                jour = c[1].date_input("Date de la visite *", value=auj.date(), max_value=auj.date(), key=f"smv_j_{v}", format="DD/MM/YYYY")
+                c = st.columns(2)
+                chef = c[0].selectbox("Chef d'équipe *", chefs_connus, index=None, accept_new_options=True, key=f"smv_chef_{v}",
+                                      placeholder="Choisir ou saisir…")
+                membres = c[1].text_input("Membres de l'équipe (séparés par des virgules)", key=f"smv_m_{v}")
+                c = st.columns(3)
+                typ = c[0].selectbox("Type", gi.TYPES_VISITE, key=f"smv_t_{v}")
+                etat = c[1].selectbox("État constaté", gi.ETATS_SAISIE[:-1], index=None, key=f"smv_e_{v}", placeholder="Non relevé")
+                equipe = c[2].selectbox("Équipe déclarée", list(eq.loc[eq["statut"] == "Active", "nom"]), index=None, key=f"smv_eq_{v}",
+                                        placeholder="Facultatif")
+                obs = st.text_area("Observations", key=f"smv_o_{v}", height=70)
+                appliquer = st.checkbox("Mettre à jour l'état de la centrale avec l'état constaté", value=True, key=f"smv_a_{v}",
+                                        help="Si l'état constaté diffère de l'état connu, il devient l'état de la centrale "
+                                             "(un arrêt est alors ouvert ou clos en conséquence).")
+                if st.form_submit_button("💾 Enregistrer la visite", type="primary"):
+                    try:
+                        ident = gs.enregistrer_visite({"site": None if k is None else infos.at[k, "site"], "date": pd.Timestamp(jour),
+                                                       "chef": chef, "membres": membres, "equipe": equipe, "type": typ,
+                                                       "etat_constate": etat, "observations": obs}, auj,
+                                                      None if k is None else infos.at[k, "etat"], appliquer)
+                        st.session_state["_smv_n"] = v + 1
+                        _ok("_smv_ok", f"Visite {ident} enregistrée pour {infos.at[k, 'site']}.")
+                    except ValueError as e:
+                        _erreurs(e)
+    with c2:
+        st.markdown("**Couverture des visites**")
+        c = st.columns(3)
+        annees = sorted({int(a) for a in visites["date"].dt.year.unique()}, reverse=True) if len(visites) else []
+        an = c[0].selectbox("Année", [None] + annees, format_func=lambda a: "Toutes" if a is None else str(a), key="smv_an")
+        mo = c[1].selectbox("Mois", [None] + list(range(1, 13)), format_func=lambda m: "Tous" if m is None else gi.MOIS_COURTS[m - 1], key="smv_mo")
+        reg = c[2].selectbox("Région", [None] + sorted(sites["region"].dropna().unique()), format_func=lambda r: "Toutes" if r is None else r, key="smv_reg")
+        cles = set(sites["cle_site"]) if reg is None else set(sites.loc[sites["region"] == reg, "cle_site"])
+        vf = gi.filtrer_visites(visites, an, mo, cles)
+        k_ = gi.couverture_visites(vf, perimetre_tot & cles)
+        sans_date = gs.interventions_sans_date(f)
+        kpi_row([("Visites", n(k_["visites"]), "un passage par site et par jour"),
+                 ("Centrales visitées", n(k_["centrales"]), None),
+                 ("Couverture du parc", n(k_["couverture"], 0, " %"), f"sur {len(perimetre_tot & cles)} en exploitation"),
+                 ("Jamais visitées (période)", n(k_["jamais"]), None)])
+        kpi_row([("Interventions sans date", n(sans_date), "hors des filtres de période"),
+                 ("Chefs d'équipe actifs", n(k_["chefs"]), f"{k_['sans_chef']} visite(s) sans chef"),
+                 ("Préventives / correctives / urgences", f"{k_['preventives']} / {k_['correctives']} / {k_['urgences']}", None)])
+        st.caption("Une visite = un passage d'équipe : visite saisie, inspection importée, bon d'intervention terminé ou "
+                   "constat de défaut (l'équipe était sur place). Les inspections sont comptées avec les préventives ; un "
+                   "constat de défaut URGENT est compté en urgence, les autres en correctives.")
+    if visites.empty:
+        st.info("Aucune visite connue.")
+        return
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Visites par chef d'équipe**")
+        st.dataframe(gi.visites_par_chef(vf), hide_index=True, width="stretch", height=330,
+                     column_config={"Dernière visite": st.column_config.DateColumn(**DATE)})
+    with c2:
+        pm = gi.visites_par_mois(vf)
+        if len(pm):
+            fig = px.bar(pm, x="Mois", y=["Visites", "Sites distincts"], barmode="group", title="Visites par mois",
+                         color_discrete_map={"Visites": "#0F766E", "Sites distincts": "#2563EB"}, labels={"value": "", "variable": ""})
+            fig = plotly_base_layout(fig, height=330)
+            fig.update_layout(legend=dict(orientation="h", y=-0.25), margin=dict(t=40))
+            st.plotly_chart(fig, width="stretch")
+
+    # ---- harmonisation des noms de chefs (rien n'est fusionné sans validation)
+    corr = gs.correspondances_noms()
+    groupes = gi.variantes_de_noms(visites["chef"].dropna().tolist() + eq["chef"].dropna().tolist(), corr)
+    with st.expander(f"🧹 Noms de chefs d'équipe à harmoniser — {len(groupes)} proposition(s), {len(set(corr.values()))} nom(s) validé(s)"):
+        st.caption("Propositions : noms identiques à la casse, aux accents et aux espaces près. Rien n'est fusionné tant que tu "
+                   "n'as pas validé. Deux orthographes différentes d'une même personne se réunissent avec le formulaire du bas.")
+        edition = peut_modifier()
+        for i, grp in enumerate(groupes[:20]):
+            c = st.columns([3, 2, 1])
+            c[0].write(" · ".join(grp))
+            retenu = c[1].selectbox("Nom retenu", grp, key=f"smv_var_{i}", label_visibility="collapsed")
+            if edition and c[2].button("Valider", key=f"smv_var_ok_{i}"):
+                gs.valider_correspondance(grp, retenu)
+                _ok("_smv_ok", f"Correspondance validée : {', '.join(grp)} → {retenu}.")
+        if edition:
+            with st.form("smv_corr"):
+                c = st.columns([3, 2, 1])
+                autres = c[0].multiselect("Écritures désignant la même personne", chefs_connus, key="smv_corr_v")
+                nom = c[1].text_input("Nom à retenir", key="smv_corr_n")
+                c[2].write("")
+                if c[2].form_submit_button("Réunir"):
+                    try:
+                        if len(autres) < 1:
+                            raise ValueError("Choisis au moins une écriture.")
+                        gs.valider_correspondance(autres, nom)
+                        _ok("_smv_ok", f"Correspondance validée : {', '.join(autres)} → {' '.join(nom.split())}.")
+                    except ValueError as e:
+                        _erreurs(e)
+        if corr:
+            st.dataframe(pd.DataFrame({"Écriture (normalisée)": list(corr), "Nom retenu": list(corr.values())}), hide_index=True, width="stretch")
+
+    section_title("JOURNAL DES VISITES")
+    j = vf.sort_values("date", ascending=False)
+    vue = pd.DataFrame({"Date": j["date"], "Site": j["site"], "Région": j["cle_site"].map(infos["region"]), "Chef d'équipe": j["chef"],
+                        "Membres": j["membres"], "Équipe": j["equipe"], "Type": j["type"], "État constaté": j["etat_constate"],
+                        "Observations": j["observations"], "Source": j["source"]})
+    st.caption(f"{len(vue)} visite(s) pour la sélection.")
+    st.dataframe(vue.head(500), hide_index=True, width="stretch", height=380,
+                 column_config={"Date": st.column_config.DateColumn(**DATE), "Observations": st.column_config.TextColumn(width="large")})
+    buf = io.BytesIO()
+    vue.to_excel(buf, index=False)
+    st.download_button("⬇️ Exporter le journal (Excel)", buf.getvalue(), "journal_des_visites.xlsx", key="smv_dl")
+
+
+# ============================================================================= ÉQUIPES (module Ressources du GMAO)
+def onglet_equipes(sites: pd.DataFrame, visites: pd.DataFrame, ref: pd.DataFrame, auj: pd.Timestamp) -> None:
+    _flash("_sme_ok")
+    edition = peut_modifier()
+    eq = gs.equipes()
+    bi = gc.table("gmao_bi")
+    missions = gi.missions_depuis_bi(bi, set(eq["nom"]), gc.STATUTS_BI_OUVERTS, auj)
+    zones_parc = {str(z) for z in sites["zone"].dropna()}
+    k = gi.indicateurs_equipes(eq, missions, zones_parc, auj)
+    kpi_row([("Équipes actives", n(k["actives"]), f"{k['inactives']} inactive(s)"),
+             ("Personnes", n(k["personnes"]), "chefs + membres"),
+             ("Zones couvertes", f"{k['zones_couvertes']} / {k['zones']}", None),
+             ("Missions à venir", n(k["a_venir"]), None),
+             ("Missions en retard", n(k["en_retard"]), "date dépassée, non réalisées"),
+             ("Taux de réalisation 30 j", n(k["realisation_taux"], 0, " %"), f"{k['realisation_echues']} mission(s) échue(s)")])
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if not edition:
+            st.info("🔒 Votre profil ne permet pas de créer ou de modifier une équipe.")
+        else:
+            pre = st.session_state.get("_sme_pre", {})
+            choix = st.selectbox("Équipe", [None] + list(eq["nom"]), format_func=lambda x: "➕ Nouvelle équipe" if x is None else f"✏️ Modifier : {x}",
+                                 key=f"sme_choix_{st.session_state.get('_sme_n', 0)}")
+            a = eq[eq["nom"] == choix].iloc[0] if choix else None
+            val = lambda champ, defaut="": (a[champ] if a is not None and not gi.est_vide(a[champ]) else pre.get(champ, defaut))  # noqa: E731
+            v = st.session_state.get("_sme_n", 0)
+            cle_f = f"{v}_{choix}_{pre.get('chef', '')}"
+            zones = sorted(zones_parc | {str(z) for z in eq["zone"].dropna()})
+            with st.form(f"sme_form_{cle_f}"):
+                st.markdown("**Créer une équipe**" if a is None else f"**Modifier l'équipe « {choix} »**")
+                c = st.columns(2)
+                nom = c[0].text_input("Nom de l'équipe *", value=val("nom"), key=f"sme_nom_{cle_f}", placeholder="ex. Équipe Nord 1")
+                zone = c[1].selectbox("Zone *", zones, index=zones.index(val("zone")) if val("zone") in zones else None,
+                                      accept_new_options=True, key=f"sme_zone_{cle_f}", placeholder="Choisir ou saisir…")
+                c = st.columns(2)
+                chef = c[0].text_input("Chef d'équipe *", value=val("chef"), key=f"sme_chef_{cle_f}")
+                tel = c[1].text_input("Téléphone du chef", value=val("telephone"), key=f"sme_tel_{cle_f}")
+                statut = st.selectbox("Statut", gi.STATUTS_EQUIPE, index=gi.STATUTS_EQUIPE.index(val("statut", "Active")), key=f"sme_st_{cle_f}")
+                membres = st.text_input("Membres (séparés par des virgules)", value=val("membres"), key=f"sme_m_{cle_f}", placeholder="Nom 1, Nom 2, …")
+                if st.form_submit_button("💾 Enregistrer l'équipe", type="primary"):
+                    try:
+                        gs.enregistrer_equipe({"nom": nom, "zone": zone, "chef": chef, "telephone": tel, "statut": statut, "membres": membres}, choix)
+                        st.session_state.pop("_sme_pre", None)
+                        st.session_state["_sme_n"] = v + 1
+                        _ok("_sme_ok", f"Équipe « {' '.join(nom.split())} » enregistrée.")
+                    except ValueError as e:
+                        _erreurs(e)
+    with c2:
+        actives = list(eq.loc[eq["statut"] == "Active", "nom"])
+        if not edition:
+            st.info("🔒 Votre profil ne permet pas de programmer une mission.")
+        elif not actives:
+            st.info("Programmer une mission : crée d'abord une équipe active.")
+        else:
+            info = ref.assign(_k=ref["Nom du site"].map(g.cle)).drop_duplicates("_k").set_index("_k")
+            s = sites[sites["cle_site"].isin(info.index)].sort_values("site")
+            lib = dict(zip(s["cle_site"], s["site"] + " (" + s["phase"].astype(str) + ", " + s["region"].astype(str) + ")"))
+            w = st.session_state.get("_smm_n", 0)
+            with st.form(f"smm_form_{w}"):
+                st.markdown("**Programmer une mission**")
+                c = st.columns(2)
+                ks = c[0].selectbox("Site *", list(lib), format_func=lib.get, index=None, key=f"smm_site_{w}", placeholder="Nom de la centrale…")
+                quand = c[1].date_input("Date prévue *", value=auj.date(), min_value=auj.date(), key=f"smm_d_{w}", format="DD/MM/YYYY")
+                c = st.columns(2)
+                equipe = c[0].selectbox("Équipe *", actives, key=f"smm_eq_{w}",
+                                        format_func=lambda x: f"{x} ({eq.set_index('nom').at[x, 'zone']})")
+                typ = c[1].selectbox("Type", list(gi.TYPES_MISSION), key=f"smm_t_{w}")
+                consignes = st.text_input("Objet / consignes", key=f"smm_c_{w}")
+                if st.form_submit_button("🗓️ Programmer", type="primary"):
+                    try:
+                        r = None if ks is None else s.set_index("cle_site").loc[ks]
+                        ident = gs.programmer_mission(None if r is None else {"site": r["site"], "site_id": info.at[ks, "site_id"],
+                                                                              "phase": r["phase"], "region": r["region"]},
+                                                      pd.Timestamp(quand), equipe, typ, consignes, auj)
+                        st.session_state["_smm_n"] = w + 1
+                        _ok("_sme_ok", f"Mission {ident} programmée pour {r['site']} le {pd.Timestamp(quand):%d/%m/%Y} ({equipe}).")
+                    except ValueError as e:
+                        _erreurs(e)
+            st.caption("Une mission est un bon d'intervention planifié : elle apparaît dans « Bons d'intervention » et dans "
+                       "« Préventif & planning », où elle se traite et se clôture.")
+
+    section_title("ÉQUIPES DE MAINTENANCE")
+    if eq.empty:
+        st.info("Aucune équipe déclarée. Crée-les ci-dessus, ou à partir des chefs de l'historique en bas de page.")
+    else:
+        fiches_eq = bi[bi["type"] == "Corrective"].groupby("equipe").size().to_dict() if len(bi) else {}
+        t = gi.tableau_equipes(eq, visites, missions, sites, fiches_eq, auj)
+        t["Membres (noms)"] = eq["membres"].values
+        st.dataframe(t, hide_index=True, width="stretch",
+                     column_config={"Dernière activité": st.column_config.DateColumn(**DATE),
+                                    "Membres (noms)": st.column_config.TextColumn(width="large")})
+        st.caption("Interventions et sites visités : visites portant le nom de l'équipe, ou dont le chef est celui de "
+                   "l'équipe. Sites affectés : centrales dont le responsable de zone (journal des affectations) est le chef.")
+
+        section_title("PLANNING DES MISSIONS")
+        c = st.columns([1.5, 1.5, 4])
+        f_eq = c[0].selectbox("Équipe", [None] + list(eq["nom"]), format_func=lambda x: "Toutes" if x is None else x, key="smm_f_eq")
+        f_st = c[1].selectbox("Missions", ["À traiter", "Réalisées", "Toutes"], key="smm_f_st")
+        m = missions if f_eq is None else missions[missions["equipe"] == f_eq]
+        m = m[m["statut"].isin(["À venir", "En retard"])] if f_st == "À traiter" else m[m["statut"] == "Réalisée"] if f_st == "Réalisées" else m
+        if m.empty:
+            st.info("Aucune mission.")
+        else:
+            zone = dict(zip(sites["site"], sites["zone"]))
+            st.dataframe(pd.DataFrame({"Date prévue": m["date_prevue"], "Site": m["site"], "Zone": m["site"].map(zone), "Équipe": m["equipe"],
+                                       "Type": m["type"], "Objet": m["description"], "Statut": m["statut"], "Bon d'intervention": m["id"]})
+                         .sort_values("Date prévue"), hide_index=True, width="stretch",
+                         column_config={"Date prévue": st.column_config.DateColumn(**DATE)})
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if len(eq):
+            act = t[["Équipe", "Interventions 12 mois", "Sites visités"]].rename(columns={"Interventions 12 mois": "Visites", "Sites visités": "Sites distincts"})
+            fig = px.bar(act, x="Équipe", y=["Visites", "Sites distincts"], barmode="group", title="Activité par équipe (12 derniers mois)",
+                         color_discrete_map={"Visites": "#0F766E", "Sites distincts": "#2563EB"}, labels={"value": "", "variable": ""})
+            fig = plotly_base_layout(fig, height=320)
+            fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=40))
+            st.plotly_chart(fig, width="stretch")
+    with c2:
+        st.markdown("**Chefs d'équipe de l'historique sans équipe déclarée**")
+        orph = gi.chefs_sans_equipe(visites, eq, dict(zip(sites["cle_site"], sites["zone"])))
+        if orph.empty:
+            st.success("Tous les chefs de l'historique des visites appartiennent à une équipe déclarée.")
+        for i, r in enumerate(orph.head(15).itertuples()):
+            c = st.columns([3, 1, 1.2, 1.4, 1.6])
+            c[0].write(r.Chef)
+            c[1].write(f"{r.Visites} visite(s)")
+            c[2].write(r._3 or "—")
+            c[3].write("—" if pd.isna(r.Dernière) else f"{r.Dernière:%d/%m/%Y}")
+            if edition and c[4].button("➕ Équipe", key=f"sme_orph_{i}", help="Créer l'équipe de ce chef"):
+                st.session_state["_sme_pre"] = {"chef": r.Chef, "zone": r._3 or ""}
+                st.session_state["_sme_n"] = st.session_state.get("_sme_n", 0) + 1     # repart sur « Nouvelle équipe »
+                st.rerun()
+        if len(orph) > 15:
+            st.caption(f"… et {len(orph) - 15} autre(s).")
+        if len(orph):
+            st.caption("« ➕ Équipe » préremplit le formulaire du haut avec le chef et sa zone principale ; il reste à "
+                       "donner un nom à l'équipe et à enregistrer.")

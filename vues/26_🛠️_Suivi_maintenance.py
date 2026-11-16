@@ -67,9 +67,10 @@ if f0.empty and (sites["etat"] == gi.NON_RENSEIGNE).all():
 
 arrets = gs.arrets_connus(f0, bi)
 visites = gs.visites_connues(f0, bi)
-EQUIPES = sorted({str(x) for x in sites["responsable"].dropna()}) + ["Prestataire / autre"]
-t_vue, t_parc, t_back, t_fiche, t_arr, t_par = st.tabs(["📊 Vue d'ensemble", "🏭 Parc de sites", "📋 Backlog", "➕ Nouvelle fiche",
-                                                       "🛑 Arrêts et disponibilité", "⚙️ Paramètres"])
+EQUIPES = list(gs.equipes().query("statut == 'Active'")["nom"]) + sorted({str(x) for x in sites["responsable"].dropna()}) \
+    + ["Prestataire / autre"]
+t_vue, t_parc, t_back, t_fiche, t_arr, t_vis, t_par = st.tabs(["📊 Vue d'ensemble", "🏭 Parc de sites", "📋 Backlog", "➕ Nouvelle fiche",
+                                                              "🛑 Arrêts et disponibilité", "🚐 Visites", "⚙️ Paramètres"])
 
 # ============================================================================= VUE D'ENSEMBLE
 with t_vue:
@@ -313,7 +314,8 @@ with t_vue:
             st.caption("Ces noms ne se retrouvent pas tels quels dans le référentiel des sites (orthographe différente "
                        "ou site manquant). Elles sont comptées ici d'après les journaux, mais restent à rapprocher.")
             st.write(", ".join(absents_ref))
-    st.caption("L'onglet Visites arrive au lot suivant ; Stocks et Équipes étendront les modules du GMAO.")
+    st.caption("Les équipes et la programmation des missions sont dans « GMAO — Maintenance → Ressources » ; les stocks "
+               "étendront le module du GMAO au dernier lot.")
 
 with t_parc:
     gsu.onglet_parc(sites, f0, arrets, visites, ref, auj)
@@ -323,6 +325,8 @@ with t_fiche:
     gsu.onglet_fiche(sites, ref, auj, EQUIPES, list(f0["materiel"].unique()))
 with t_arr:
     gsu.onglet_arrets(sites, arrets, EQUIPES)
+with t_vis:
+    gsu.onglet_visites(sites, visites, f0, auj)
 
 # ============================================================================= PARAMÈTRES
 with t_par:

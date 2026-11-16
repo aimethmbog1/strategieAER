@@ -121,22 +121,69 @@ def arrets_connus(f: pd.DataFrame, bi: pd.DataFrame) -> pd.DataFrame:
     return a.drop_duplicates().reset_index(drop=True)
 
 
+def correspondances_noms() -> dict:
+    """Table de correspondance VALIDÉE des noms de chefs d'équipe : clé normalisée → nom retenu."""
+    d = valeur(PAGE, "noms_chefs", None)
+    return d if isinstance(d, dict) else {}
+
+
+def valider_correspondance(variantes: list[str], retenu: str) -> None:
+    """Enregistre que ces écritures désignent la même personne, affichée sous le nom `retenu`."""
+    if gi.est_vide(retenu):
+        raise ValueError("Indique le nom à retenir.")
+    d = dict(correspondances_noms())
+    propre = " ".join(str(retenu).split())
+    for x in list(variantes) + [propre]:
+        if not gi.est_vide(x):
+            d[gi.cle_nom(x)] = propre
+    enregistrer_reglages({"noms_chefs": d})
+
+
 def visites_connues(f: pd.DataFrame, bi: pd.DataFrame) -> pd.DataFrame:
-    """Passages d'une équipe sur site connus à ce stade : inspections importées, constats de défaut (l'équipe
-    était sur place) et bons d'intervention terminés — une occurrence par site et par jour, avec sa source."""
+    """Passages d'une équipe sur site : visites saisies, inspections importées, bons d'intervention terminés et
+    constats de défaut (l'équipe était sur place). Une seule ligne par site et par jour : la source la plus
+    détaillée est gardée (dans cet ordre). Les noms de chefs passent par la table de correspondance validée."""
     t = gmao_ui.charger_tables()
+    cols = ["cle_site", "site", "date", "chef", "membres", "equipe", "type", "etat_constate", "observations", "source"]
     lots = []
+    vs = visites_saisies()
+    if len(vs):
+        lots.append(vs.assign(source="Visite saisie")[cols])
     ins = t.get("inspections")
     if ins is not None and not ins.empty:
-        lots.append(pd.DataFrame({"cle_site": ins["site"].map(g.cle), "date": pd.to_datetime(ins["date_inspection"], errors="coerce"),
-                                  "source": "Inspection"}))
-    lots.append(pd.DataFrame({"cle_site": f["cle_site"], "date": f["date_constat"], "source": "Constat de défaut"}))
+        qui = [gi.decouper_intervenants(x) for x in ins["inspecte_par"]]
+        lots.append(pd.DataFrame({"cle_site": ins["site"].map(g.cle), "site": ins["site"], "date": pd.to_datetime(ins["date_inspection"], errors="coerce"),
+                                  "chef": [q[0] for q in qui], "membres": [q[1] for q in qui], "equipe": None, "type": "Inspection",
+                                  "etat_constate": None, "observations": ins["remarque"] if "remarque" in ins else None,
+                                  "source": "Inspection importée (" + ins["annee"].astype(str) + ")"})[cols])
     if bi is not None and len(bi):
         b = bi[bi["date_fin"].notna()]
-        lots.append(pd.DataFrame({"cle_site": b["site"].map(g.cle), "date": b["date_fin"], "source": "Bon d'intervention"}))
+        if len(b):
+            lots.append(pd.DataFrame({"cle_site": b["site"].map(g.cle), "site": b["site"], "date": b["date_fin"], "chef": b["chef"],
+                                      "membres": b["intervenants"], "equipe": b["equipe"],
+                                      "type": b["type"].map(lambda x: "Maintenance corrective" if x == "Corrective" else "Maintenance préventive"),
+                                      "etat_constate": None, "observations": b["travaux"], "source": "Bon d'intervention " + b["id"].astype(str)})[cols])
+    if len(f):
+        lots.append(pd.DataFrame({"cle_site": f["cle_site"], "site": f["site"], "date": f["date_constat"], "chef": None, "membres": None,
+                                  "equipe": None, "type": f["priorite"].map(lambda p: "Urgence" if p == "URGENT" else "Maintenance corrective"),
+                                  "etat_constate": f["site_arret_au_constat"].map({True: gi.ARRET, False: None}),
+                                  "observations": f["description"], "source": "Constat de défaut (" + f["source"].astype(str) + ")"})[cols])
+    if not lots:
+        return pd.DataFrame(columns=cols)
     v = pd.concat(lots, ignore_index=True)
     v["date"] = pd.to_datetime(v["date"]).dt.normalize()
-    return v.dropna(subset=["date"]).drop_duplicates(["cle_site", "date"]).reset_index(drop=True)
+    v = v.dropna(subset=["date"]).drop_duplicates(["cle_site", "date"]).reset_index(drop=True)
+    corr = correspondances_noms()
+    v["chef"] = v["chef"].map(lambda x: gi.nom_retenu(x, corr))
+    return v
+
+
+def interventions_sans_date(f: pd.DataFrame) -> int:
+    """Interventions impossibles à situer dans le temps (fiches sans date de constat, inspections sans date) :
+    elles n'entrent dans aucun filtre de période, mais elles sont comptées et affichées."""
+    ins = gmao_ui.charger_tables().get("inspections")
+    n_ins = 0 if ins is None or ins.empty else int(pd.to_datetime(ins["date_inspection"], errors="coerce").isna().sum())
+    return int(f["date_constat"].isna().sum()) + n_ins
 
 
 def supervision_deconnectee(seuil_jours: int) -> dict[str, pd.Timestamp]:
@@ -396,3 +443,117 @@ def a_l_arret_sans_episode(sites: pd.DataFrame) -> set:
     """Centrales déclarées « À l'arrêt » sans arrêt en cours saisi : indisponibles sur toute la période."""
     ep = arrets_declares()
     return set(sites.loc[sites["etat"] == gi.ARRET, "cle_site"]) - set(ep.loc[ep["fin"].isna(), "cle_site"])
+
+
+# ============================================================================= lot 4 : visites, équipes, missions
+REGISTRE_VISITES, REGISTRE_EQUIPES = "gmao_visites", "gmao_equipes"
+
+
+def _registre(nom: str, colonnes: list[str], dates: tuple = ()) -> pd.DataFrame:
+    from .storage import session_ou_stockage
+    d = session_ou_stockage(nom, lambda: pd.DataFrame(columns=colonnes))
+    d = pd.DataFrame(columns=colonnes) if d is None or len(d) == 0 else d.copy()
+    for c in colonnes:
+        if c not in d.columns:
+            d[c] = None
+    for c in dates:
+        d[c] = pd.to_datetime(d[c], errors="coerce")
+    return d[colonnes]
+
+
+def visites_saisies() -> pd.DataFrame:
+    """Visites enregistrées dans l'application (registre distinct des inspections importées, que tout réimport
+    d'un journal remplace par année)."""
+    return _registre(REGISTRE_VISITES, gi.COLONNES_VISITES, ("date", "horodatage"))
+
+
+def enregistrer_visite(v: dict, aujourd_hui: pd.Timestamp, etat_actuel: str | None = None, appliquer_etat: bool = False) -> str:
+    """Enregistre une visite de site. Si `appliquer_etat`, l'état constaté devient l'état de la centrale."""
+    from .storage import mettre_a_jour
+    err = gi.controler_visite(v.get("site"), v.get("date"), v.get("chef"), v.get("type"), aujourd_hui)
+    etat = None if gi.est_vide(v.get("etat_constate")) else v["etat_constate"]
+    appliquer = appliquer_etat and etat is not None and etat != etat_actuel
+    cause = None if gi.est_vide(v.get("observations")) else str(v["observations"]).strip()[:200]
+    if appliquer and not err:
+        err += gi.controler_etat(v["site"], etat, v["date"], aujourd_hui, cause or "Constaté en visite")
+    if err:
+        raise ValueError("\n".join(err))
+    d = visites_saisies()
+    an = gc.maintenant().year
+    nums = d["id"].dropna().astype(str)
+    nums = nums[nums.str.startswith(f"VI-{an}-")].str.split("-").str[-1].astype(int)
+    ident = f"VI-{an}-{(nums.max() + 1 if len(nums) else 1):04d}"
+    corr = correspondances_noms()
+    ligne = {"id": ident, "cle_site": g.cle(v["site"]), "site": str(v["site"]).strip(), "date": pd.Timestamp(v["date"]).normalize(),
+             "chef": gi.nom_retenu(v["chef"], corr), "membres": ", ".join(gi.liste_membres(v.get("membres"))) or None,
+             "equipe": None if gi.est_vide(v.get("equipe")) else str(v["equipe"]).strip(), "type": v["type"], "etat_constate": etat,
+             "observations": None if gi.est_vide(v.get("observations")) else str(v["observations"]).strip(),
+             "source": "Visite saisie", "auteur": _auteur(), "horodatage": pd.Timestamp(gc.maintenant())}
+    mettre_a_jour(REGISTRE_VISITES, pd.concat([d, pd.DataFrame([ligne])], ignore_index=True),
+                  f"visite {ident} — {ligne['site']} le {ligne['date']:%d/%m/%Y} ({ligne['type']})")
+    if appliquer:
+        enregistrer_etat(v["site"], etat, cause or "Constaté en visite", ligne["date"], f"Visite {ident}", aujourd_hui)
+    return ident
+
+
+def equipes() -> pd.DataFrame:
+    d = _registre(REGISTRE_EQUIPES, gi.COLONNES_EQUIPES)
+    d["statut"] = d["statut"].fillna("Active")
+    return d
+
+
+def enregistrer_equipe(v: dict, ancien_nom: str | None = None) -> None:
+    """Crée une équipe de maintenance, ou modifie celle nommée `ancien_nom`."""
+    from .storage import mettre_a_jour
+    d = equipes()
+    autres = set(d.loc[d["nom"] != ancien_nom, "nom"]) if ancien_nom else set(d["nom"])
+    err = gi.controler_equipe(v, autres)
+    if ancien_nom and ancien_nom not in set(d["nom"]):
+        err.append("Équipe à modifier introuvable.")
+    if err:
+        raise ValueError("\n".join(err))
+    ligne = {"nom": " ".join(str(v["nom"]).split()), "zone": str(v["zone"]).strip(), "chef": gi.nom_retenu(v["chef"], correspondances_noms()),
+             "telephone": None if gi.est_vide(v.get("telephone")) else str(v["telephone"]).strip(), "statut": v["statut"],
+             "membres": ", ".join(gi.liste_membres(v.get("membres"))) or None}
+    if ancien_nom:
+        i = d.index[d["nom"] == ancien_nom][0]
+        for k, x in ligne.items():
+            d.loc[i, k] = x
+        detail = f"équipe « {ancien_nom} » modifiée"
+        if ligne["nom"] != ancien_nom:   # les bons d'intervention suivent le nouveau nom de l'équipe
+            bi = gc.table("gmao_bi")
+            if (bi["equipe"] == ancien_nom).any():
+                bi.loc[bi["equipe"] == ancien_nom, "equipe"] = ligne["nom"]
+                gc.sauver("gmao_bi", bi, f"équipe « {ancien_nom} » renommée « {ligne['nom']} »")
+    else:
+        d = pd.concat([d, pd.DataFrame([ligne])], ignore_index=True)
+        detail = f"équipe « {ligne['nom']} » créée ({ligne['zone']}, chef : {ligne['chef']})"
+    mettre_a_jour(REGISTRE_EQUIPES, d, detail)
+
+
+def programmer_mission(site: dict, date_prevue, equipe: str, type_mission: str, consignes: str | None,
+                       aujourd_hui: pd.Timestamp) -> str:
+    """Programme une mission : un bon d'intervention planifié, affecté à l'équipe (visible dans le planning du GMAO).
+    `site` : {"site", "site_id", "phase", "region"}."""
+    eq = equipes()
+    err = []
+    if not site or gi.est_vide(site.get("site")):
+        err.append("Choisis la centrale.")
+    if date_prevue is None or pd.isna(date_prevue):
+        err.append("Renseigne la date prévue.")
+    elif pd.Timestamp(date_prevue).normalize() < pd.Timestamp(aujourd_hui).normalize():
+        err.append("La date prévue d'une mission ne peut pas être passée.")
+    if equipe not in set(eq.loc[eq["statut"] == "Active", "nom"]):
+        err.append("Choisis une équipe active.")
+    if type_mission not in gi.TYPES_MISSION:
+        err.append("Choisis le type de mission.")
+    if err:
+        raise ValueError("\n".join(err))
+    chef = eq.loc[eq["nom"] == equipe, "chef"].iloc[0]
+    ligne = {"origine": "Mission programmée", "type": gi.TYPES_MISSION[type_mission],
+             "priorite": "Majeure" if type_mission == "Maintenance corrective" else "Mineure",
+             "site_id": site.get("site_id"), "site": site["site"], "phase": site.get("phase"), "region": site.get("region"),
+             "description": type_mission if gi.est_vide(consignes) else str(consignes).strip(), "statut": "Planifié",
+             "centrale_arret": False, "date_creation": pd.Timestamp(aujourd_hui).normalize(),
+             "date_prevue": pd.Timestamp(date_prevue).normalize(), "equipe": equipe, "chef": chef}
+    return gc.ajouter("gmao_bi", [ligne], "BI", f"mission programmée — {site['site']} le {ligne['date_prevue']:%d/%m/%Y} ({equipe})")[0]

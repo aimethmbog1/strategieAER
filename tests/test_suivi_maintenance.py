@@ -161,3 +161,65 @@ def test_parcours_arrets(app):
     at.selectbox(key="smb_st_0").set_value("Clôturé")
     ok, err = _valider(at, "Mettre à jour")
     assert ok and pd.notna(arrets().iloc[-1]["fin"])
+
+
+def test_parcours_visites(app):
+    """Visite enregistrée avec un état constaté appliqué à la centrale, puis validation d'une correspondance de noms."""
+    at = app
+    k = _cle(at.selectbox(key="smv_site_0").options[4])
+    at.selectbox(key="smv_site_0").set_value(k)
+    ok, err = _valider(at, "Enregistrer la visite")
+    assert not ok and "chef" in err[0]
+    at.selectbox(key="smv_site_0").set_value(k)
+    at.selectbox(key="smv_chef_0").set_value(at.selectbox(key="smv_chef_0").options[0])
+    at.text_input(key="smv_m_0").set_value("Membre Un,  Membre Deux")
+    at.selectbox(key="smv_e_0").set_value("Arrêt après 18 h")
+    at.text_area(key="smv_o_0").set_value("Batteries faibles en soirée")
+    ok, err = _valider(at, "Enregistrer la visite")
+    assert ok and not err, err
+    v = at.session_state["gmao_visites"].iloc[-1]
+    assert v["cle_site"] == k and v["membres"] == "Membre Un, Membre Deux" and v["type"] == "Maintenance préventive"
+    e = at.session_state["gmao_etats_saisis"].iloc[-1]
+    assert e["cle_site"] == k and e["etat"] == "Arrêt après 18 h" and "Batteries" in e["cause"]
+    # correspondance de noms : rien n'est réuni avant validation
+    from utils import gmao_suivi as gs
+    assert gs.correspondances_noms() == {}
+    boutons = [b for b in at.button if b.key and b.key.startswith("smv_var_ok_")]
+    if boutons:                                   # proposée seulement si les journaux contiennent des variantes
+        boutons[0].click()
+        at.run()
+        assert not at.exception and at.session_state["parametres_pages"]["cle"].eq("noms_chefs").any()
+
+
+def test_parcours_equipes_et_missions(monkeypatch, tmp_path):
+    """Module Ressources du GMAO : création d'une équipe, refus d'un doublon, mission programmée (bon d'intervention)."""
+    monkeypatch.chdir(RACINE)
+    monkeypatch.setenv("AER_AUTH_DISABLED", "1")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'equipes.sqlite'}")
+    at = AppTest.from_file(str(next((RACINE / "vues").glob("23_*"))), default_timeout=300)
+    at.session_state["gm_mod"] = "ressources"
+    at.run()
+    assert not at.exception, at.exception[0].stack_trace[-5:]
+    cle_f = "0_None_"
+    ok, err = _valider(at, "Enregistrer l'équipe")
+    assert not ok and "nom" in err[0]
+    for essai in range(2):                         # le second enregistrement du même nom est refusé
+        cle_f = f"{at.session_state['_sme_n'] if '_sme_n' in at.session_state else 0}_None_"
+        at.text_input(key=f"sme_nom_{cle_f}").set_value("Équipe Essai")
+        at.selectbox(key=f"sme_zone_{cle_f}").set_value(at.selectbox(key=f"sme_zone_{cle_f}").options[0])
+        at.text_input(key=f"sme_chef_{cle_f}").set_value("Chef Essai")
+        at.text_input(key=f"sme_m_{cle_f}").set_value("Tech Un, Tech Deux")
+        ok, err = _valider(at, "Enregistrer l'équipe")
+        assert (ok and not err) if essai == 0 else (not ok and "déjà" in err[0])
+    eq = at.session_state["gmao_equipes"]
+    assert len(eq) == 1 and eq["chef"].iloc[0] == "Chef Essai" and eq["statut"].iloc[0] == "Active"
+    # mission : refusée sans site, puis programmée
+    ok, err = _valider(at, "Programmer")
+    assert not ok and "centrale" in err[0]
+    at.selectbox(key="smm_site_0").set_value(_cle(at.selectbox(key="smm_site_0").options[2]))
+    at.text_input(key="smm_c_0").set_value("Nettoyage des modules")
+    ok, err = _valider(at, "Programmer")
+    assert ok and not err, err
+    bi = at.session_state["gmao_bi"].iloc[-1]
+    assert (bi["equipe"], bi["chef"], bi["statut"], bi["type"], bi["origine"]) == ("Équipe Essai", "Chef Essai", "Planifié", "Préventive", "Mission programmée")
+    assert {m.label: m.value for m in at.metric}["Missions à venir"] == "1"

@@ -71,6 +71,11 @@ if eq_rows is not None and not eq_rows.empty:
         EQUIPES[f"{ant} — Zone {zone}"] = ing + autres
 for p in gc.table("gmao_prestataires")["nom"].dropna():
     EQUIPES[f"Prestataire — {p}"] = []
+from utils import gmao_indicateurs as _gi
+from utils import gmao_suivi as _gs
+for _e in _gs.equipes().itertuples():           # équipes de maintenance déclarées (module Ressources)
+    if _e.statut == "Active":
+        EQUIPES[_e.nom] = [x for x in [_e.chef] + _gi.liste_membres(_e.membres) if not _gi.est_vide(x)]
 EQUIPES.setdefault("Prestataire / autre", [])
 
 
@@ -729,7 +734,12 @@ def module_achats():
 
 # ============================================================================= RESSOURCES
 def module_ressources():
-    t1, t2 = st.tabs(["👷 Équipes et charge", "🤝 Prestataires"])
+    t0, t1, t2 = st.tabs(["🚐 Équipes de maintenance et missions", "👷 Équipes et charge", "🤝 Prestataires"])
+    with t0:
+        from utils import gmao_suivi as gs
+        from utils import gmao_suivi_ui as gsu
+        sites_s, _ = gs.sites_suivis(ref, bi)
+        gsu.onglet_equipes(sites_s, gs.visites_connues(gs.fiches(auj, bi), bi), ref, auj)
     with t1:
         ouverts = bi[bi["statut"].isin(gc.STATUTS_BI_OUVERTS)]
         clos30 = bi[(bi["statut"] == "Clôturé") & (bi["date_fin"] >= auj - pd.Timedelta(days=30))]

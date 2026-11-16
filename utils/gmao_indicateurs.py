@@ -752,6 +752,211 @@ def duree_arret_par_equipe(episodes: pd.DataFrame, maintenant: pd.Timestamp) -> 
     return t.sort_values("Jours d'arrêt", ascending=False).reset_index(names="Équipe")
 
 
+# ============================================================================= lot 4 : visites et équipes
+TYPES_VISITE = ["Maintenance préventive", "Maintenance corrective", "Urgence", "Inspection"]
+COLONNES_VISITES = ["id", "cle_site", "site", "date", "chef", "membres", "equipe", "type", "etat_constate", "observations",
+                    "source", "auteur", "horodatage"]
+COLONNES_EQUIPES = ["nom", "zone", "chef", "telephone", "statut", "membres"]
+STATUTS_EQUIPE = ["Active", "Inactive"]
+TYPES_MISSION = {"Maintenance préventive": "Préventive", "Maintenance corrective": "Corrective",
+                 "Inspection": "Réglementaire / inspection"}
+SANS_CHEF = "— (chef non renseigné)"
+
+
+def cle_nom(x) -> str:
+    """Clé de rapprochement d'un nom de personne : sans accents, sans casse, espaces et ponctuation ignorés.
+    « TIAM TIAGHOUE  Valery » et « Tiam Tiaghoue Valéry » ont la même clé ; deux orthographes différentes
+    (« Ngangdi » / « Ngangndi ») ne l'ont pas : seule une correspondance validée les réunit."""
+    import re
+    import unicodedata
+    if est_vide(x):
+        return ""
+    t = unicodedata.normalize("NFKD", str(x)).encode("ascii", "ignore").decode().lower()
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", t).split())
+
+
+def nom_retenu(x, correspondances: dict | None = None):
+    """Nom affiché pour une personne : celui de la table de correspondance VALIDÉE s'il existe, sinon le nom
+    tel que saisi (espaces nettoyés). Rien n'est fusionné sans validation."""
+    if est_vide(x):
+        return None
+    propre = " ".join(str(x).split())
+    return (correspondances or {}).get(cle_nom(propre), propre)
+
+
+def variantes_de_noms(noms, correspondances: dict | None = None) -> list[list[str]]:
+    """Groupes de noms écrits différemment mais identiques à la casse, aux accents et aux espaces près, et pas
+    encore couverts par la table de correspondance : des PROPOSITIONS à valider."""
+    groupes: dict[str, set] = {}
+    for x in noms:
+        if not est_vide(x):
+            groupes.setdefault(cle_nom(x), set()).add(" ".join(str(x).split()))
+    deja = correspondances or {}
+    return sorted(sorted(v) for k, v in groupes.items() if len(v) > 1 and k not in deja)
+
+
+def decouper_intervenants(texte) -> tuple[str | None, str | None]:
+    """« A, B , C » → (« A », « B, C ») : le premier nom cité est pris comme chef d'équipe, les autres comme membres."""
+    if est_vide(texte):
+        return None, None
+    noms = [" ".join(n.split()) for n in str(texte).replace(";", ",").split(",") if n.strip()]
+    return (noms[0], ", ".join(noms[1:]) or None) if noms else (None, None)
+
+
+def controler_visite(site, date, chef, type_visite, aujourd_hui: pd.Timestamp) -> list[str]:
+    err = []
+    if est_vide(site):
+        err.append("Choisis la centrale visitée.")
+    if date is None or pd.isna(date):
+        err.append("Renseigne la date de la visite.")
+    elif pd.Timestamp(date).normalize() > pd.Timestamp(aujourd_hui).normalize():
+        err.append("La date de la visite ne peut pas être dans le futur.")
+    if est_vide(chef):
+        err.append("Renseigne le chef d'équipe.")
+    if type_visite not in TYPES_VISITE:
+        err.append("Choisis le type de visite.")
+    return err
+
+
+def filtrer_visites(v: pd.DataFrame, annee: int | None = None, mois: int | None = None, sites: set | None = None) -> pd.DataFrame:
+    if annee is not None:
+        v = v[v["date"].dt.year == annee]
+    if mois is not None:
+        v = v[v["date"].dt.month == mois]
+    if sites is not None:
+        v = v[v["cle_site"].isin(sites)]
+    return v
+
+
+def couverture_visites(v: pd.DataFrame, perimetre: set) -> dict:
+    """Indicateurs de couverture sur les visites fournies (déjà filtrées) et le périmètre de centrales."""
+    vp = v[v["cle_site"].isin(perimetre)]
+    vues = set(vp["cle_site"])
+    types = v["type"].value_counts()
+    return {"visites": len(v), "centrales": v["cle_site"].nunique(), "centrales_perimetre": len(vues),
+            "couverture": 100 * len(vues) / len(perimetre) if perimetre else None,
+            "jamais": len(perimetre - vues), "chefs": int(v["chef"].dropna().nunique()),
+            "sans_chef": int(v["chef"].isna().sum()),
+            "preventives": int(types.get("Maintenance préventive", 0) + types.get("Inspection", 0)),
+            "correctives": int(types.get("Maintenance corrective", 0)), "urgences": int(types.get("Urgence", 0))}
+
+
+def visites_par_chef(v: pd.DataFrame) -> pd.DataFrame:
+    """Visites, sites distincts et dernière visite par chef d'équipe ; les visites sans chef restent visibles."""
+    g_ = v.assign(_c=v["chef"].fillna(SANS_CHEF)).groupby("_c")
+    t = pd.DataFrame({"Visites": g_.size(), "Sites distincts": g_["cle_site"].nunique(), "Dernière visite": g_["date"].max()})
+    return t.sort_values(["Visites", "Sites distincts"], ascending=False).reset_index(names="Chef d'équipe")
+
+
+def visites_par_mois(v: pd.DataFrame) -> pd.DataFrame:
+    m = v["date"].dt.to_period("M").dt.to_timestamp()
+    g_ = v.groupby(m)
+    return pd.DataFrame({"Visites": g_.size(), "Sites distincts": g_["cle_site"].nunique()}).reset_index(names="Mois")
+
+
+# ----------------------------------------------------------------------------- équipes et missions
+def controler_equipe(v: dict, noms_existants: set | None = None) -> list[str]:
+    err = []
+    if est_vide(v.get("nom")):
+        err.append("Renseigne le nom de l'équipe.")
+    elif noms_existants and cle_nom(v["nom"]) in {cle_nom(x) for x in noms_existants}:
+        err.append("Une équipe porte déjà ce nom.")
+    if est_vide(v.get("zone")):
+        err.append("Renseigne la zone de l'équipe.")
+    if est_vide(v.get("chef")):
+        err.append("Renseigne le chef d'équipe.")
+    if v.get("statut") not in STATUTS_EQUIPE:
+        err.append("Statut inconnu.")
+    tel = v.get("telephone")
+    if not est_vide(tel) and sum(ch.isdigit() for ch in str(tel)) < 8:
+        err.append("Le numéro de téléphone semble incomplet.")
+    return err
+
+
+def liste_membres(texte) -> list[str]:
+    return [] if est_vide(texte) else [" ".join(m.split()) for m in str(texte).replace(";", ",").split(",") if m.strip()]
+
+
+def missions_depuis_bi(bi: pd.DataFrame, noms_equipes: set, statuts_ouverts: list[str], aujourd_hui: pd.Timestamp) -> pd.DataFrame:
+    """Missions = bons d'intervention ayant une date prévue et affectés à une équipe déclarée.
+    Statut de mission : « Réalisée » (terminé ou clôturé), « En retard » (ouvert, date dépassée), « À venir »."""
+    cols = ["id", "date_prevue", "site", "equipe", "type", "description", "statut_bi", "statut", "date_fin"]
+    if bi is None or bi.empty or not noms_equipes:
+        return pd.DataFrame(columns=cols)
+    b = bi[bi["equipe"].isin(noms_equipes) & bi["date_prevue"].notna() & (bi["statut"] != "Annulé")]
+    auj = pd.Timestamp(aujourd_hui).normalize()
+    statut = ["Réalisée" if s_ in ("Terminé", "Clôturé") else ("En retard" if pd.Timestamp(d).normalize() < auj else "À venir")
+              for s_, d in zip(b["statut"], b["date_prevue"])]
+    return pd.DataFrame({"id": b["id"], "date_prevue": pd.to_datetime(b["date_prevue"]), "site": b["site"], "equipe": b["equipe"],
+                         "type": b["type"], "description": b["description"], "statut_bi": b["statut"], "statut": statut,
+                         "date_fin": pd.to_datetime(b["date_fin"])})[cols].reset_index(drop=True)
+
+
+def taux_realisation(missions: pd.DataFrame, aujourd_hui: pd.Timestamp, jours: int = 30) -> dict:
+    """Part des missions ÉCHUES sur la fenêtre (date prévue dans les `jours` derniers jours, aujourd'hui exclu)
+    qui ont été réalisées."""
+    auj = pd.Timestamp(aujourd_hui).normalize()
+    d = missions["date_prevue"].dt.normalize() if len(missions) else pd.Series(dtype="datetime64[ns]")
+    e = missions[(d >= auj - pd.Timedelta(days=jours)) & (d < auj)] if len(missions) else missions
+    return {"echues": len(e), "realisees": int((e["statut"] == "Réalisée").sum()) if len(e) else 0,
+            "taux": 100 * (e["statut"] == "Réalisée").mean() if len(e) else None}
+
+
+def indicateurs_equipes(equipes: pd.DataFrame, missions: pd.DataFrame, zones_du_parc: set, aujourd_hui: pd.Timestamp) -> dict:
+    act = equipes[equipes["statut"] == "Active"] if len(equipes) else equipes
+    personnes = set()
+    for r in act.itertuples():
+        personnes |= {cle_nom(r.chef)} | {cle_nom(m) for m in liste_membres(r.membres)}
+    personnes.discard("")
+    zones = {str(z) for z in act["zone"].dropna()} if len(act) else set()
+    return {"actives": len(act), "inactives": len(equipes) - len(act), "personnes": len(personnes),
+            "zones_couvertes": len(zones & zones_du_parc) if zones_du_parc else len(zones), "zones": len(zones_du_parc),
+            "a_venir": int((missions["statut"] == "À venir").sum()) if len(missions) else 0,
+            "en_retard": int((missions["statut"] == "En retard").sum()) if len(missions) else 0,
+            **{f"realisation_{k}": v for k, v in taux_realisation(missions, aujourd_hui).items()}}
+
+
+def tableau_equipes(equipes: pd.DataFrame, visites: pd.DataFrame, missions: pd.DataFrame, sites: pd.DataFrame,
+                    fiches_par_equipe: dict, aujourd_hui: pd.Timestamp, mois: int = 12) -> pd.DataFrame:
+    """Une ligne par équipe déclarée. Une visite est attribuée à l'équipe si elle porte son nom, ou si son chef
+    est le chef de l'équipe. Sites affectés : centrales dont le responsable de zone est le chef de l'équipe."""
+    debut = pd.Timestamp(aujourd_hui).normalize() - pd.DateOffset(months=mois)
+    resp = sites["responsable"].map(cle_nom) if len(sites) else pd.Series(dtype=str)
+    lignes = []
+    for r in equipes.itertuples():
+        kc = cle_nom(r.chef)
+        v = visites[(visites["equipe"] == r.nom) | (visites["chef"].map(cle_nom) == kc)] if len(visites) else visites
+        v12 = v[v["date"] >= debut] if len(v) else v
+        m = missions[missions["equipe"] == r.nom] if len(missions) else missions
+        nb = lambda s_: int((m["statut"] == s_).sum()) if len(m) else 0  # noqa: E731
+        dates = [x for x in ([v["date"].max()] if len(v) else []) + ([m["date_fin"].max()] if len(m) else []) if pd.notna(x)]
+        lignes.append({"Équipe": r.nom, "Zone": r.zone, "Chef": r.chef, "Téléphone": r.telephone, "Statut": r.statut,
+                       "Membres": len(liste_membres(r.membres)), "Sites affectés": int((resp == kc).sum()) if kc else 0,
+                       f"Interventions {mois} mois": len(v12), "Sites visités": v12["cle_site"].nunique() if len(v12) else 0,
+                       "Missions à venir": nb("À venir"), "Missions en retard": nb("En retard"), "Missions réalisées": nb("Réalisée"),
+                       "Fiches saisies": int(fiches_par_equipe.get(r.nom, 0)),
+                       "Dernière activité": max(dates) if dates else pd.NaT})
+    return pd.DataFrame(lignes)
+
+
+def chefs_sans_equipe(visites: pd.DataFrame, equipes: pd.DataFrame, zone_par_site: dict | None = None) -> pd.DataFrame:
+    """Chefs présents dans l'historique des visites mais chefs d'aucune équipe déclarée (ni membres d'une équipe)."""
+    connus = set()
+    for r in equipes.itertuples():
+        connus |= {cle_nom(r.chef)} | {cle_nom(m) for m in liste_membres(r.membres)}
+    v = visites[visites["chef"].notna()] if len(visites) else visites
+    if v.empty:
+        return pd.DataFrame(columns=["Chef", "Visites", "Zone principale", "Dernière"])
+    v = v[~v["chef"].map(cle_nom).isin(connus)]
+    if v.empty:
+        return pd.DataFrame(columns=["Chef", "Visites", "Zone principale", "Dernière"])
+    z = v["cle_site"].map(zone_par_site or {})
+    g_ = v.assign(_z=z).groupby("chef")
+    t = pd.DataFrame({"Visites": g_.size(), "Zone principale": g_["_z"].agg(lambda s_: s_.dropna().mode().iloc[0] if s_.notna().any() else None),
+                      "Dernière": g_["date"].max()})
+    return t.sort_values("Visites", ascending=False).reset_index(names="Chef")
+
+
 def maintenant_douala() -> pd.Timestamp:
     from zoneinfo import ZoneInfo
     return pd.Timestamp(datetime.now(ZoneInfo("Africa/Douala")).replace(tzinfo=None)).normalize()

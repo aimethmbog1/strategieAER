@@ -484,3 +484,121 @@ def test_causes_et_duree_par_equipe():
     d = gi.duree_arret_par_equipe(ep, AUJ).set_index("Équipe")
     assert list(d.index) == ["Équipe B", "Équipe K"]                         # sans équipe ou sans début : non attribué
     assert d.at["Équipe B", "Jours d'arrêt"] == 5 and d.at["Équipe B", "Arrêts"] == 2 and d.at["Équipe K", "Jours d'arrêt"] == 1
+
+
+# ============================================================================= lot 4 : visites et équipes
+def visites(*lignes):
+    """(cle_site, date, chef, type, équipe)"""
+    return pd.DataFrame([{"cle_site": k, "site": k.upper(), "date": d, "chef": c, "membres": None, "equipe": e, "type": t,
+                          "etat_constate": None, "observations": None, "source": "x"} for k, d, c, t, e in lignes],
+                        columns=["cle_site", "site", "date", "chef", "membres", "equipe", "type", "etat_constate", "observations", "source"])
+
+
+def test_cle_de_nom_et_variantes():
+    assert gi.cle_nom("TIAM  TIAGHOUE Valery") == gi.cle_nom(" Tiam Tiaghoue Valéry ") == "tiam tiaghoue valery"
+    assert gi.cle_nom("Ngangdi Nelson") != gi.cle_nom("Ngangndi Nelson") and gi.cle_nom(None) == ""
+    noms = ["TIAM TIAGHOUE Valery", "TIAM TIAGHOUE VALERY", "Mba Bertrand", "MBA BERTRAND ", "Ahoudja Boris", None, "nan"]
+    assert gi.variantes_de_noms(noms) == [["MBA BERTRAND", "Mba Bertrand"], ["TIAM TIAGHOUE VALERY", "TIAM TIAGHOUE Valery"]]
+    # une variante déjà validée n'est plus proposée
+    assert gi.variantes_de_noms(noms, {"mba bertrand": "MBA Bertrand"}) == [["TIAM TIAGHOUE VALERY", "TIAM TIAGHOUE Valery"]]
+
+
+def test_rien_n_est_fusionne_sans_validation():
+    assert gi.nom_retenu("MBA  BERTRAND") == "MBA BERTRAND" and gi.nom_retenu("Mba Bertrand") == "Mba Bertrand"
+    table = {"mba bertrand": "MBA Bertrand", "ngangndi nelson": "Ngangdi Nelson"}
+    assert gi.nom_retenu("MBA  BERTRAND", table) == gi.nom_retenu("mba bertrand", table) == "MBA Bertrand"
+    assert gi.nom_retenu("Ngangndi Nelson", table) == "Ngangdi Nelson" and gi.nom_retenu("Autre", table) == "Autre"
+    assert gi.nom_retenu(" ", table) is None and gi.nom_retenu(None) is None
+
+
+def test_decoupage_des_intervenants():
+    assert gi.decouper_intervenants("ATEBA JOSEPH , HANDSON ANYERE, NSOSEKA EMMANUEL ") == ("ATEBA JOSEPH", "HANDSON ANYERE, NSOSEKA EMMANUEL")
+    assert gi.decouper_intervenants("Seul") == ("Seul", None) and gi.decouper_intervenants(None) == (None, None)
+    assert gi.liste_membres("A ,B;  C ") == ["A", "B", "C"] and gi.liste_membres(None) == []
+
+
+def test_controle_d_une_visite():
+    assert gi.controler_visite("A", J(1), "Chef", "Inspection", AUJ) == []
+    assert "futur" in gi.controler_visite("A", AUJ + pd.Timedelta(days=1), "Chef", "Inspection", AUJ)[0]
+    assert "chef" in gi.controler_visite("A", J(1), " ", "Inspection", AUJ)[0]
+    assert len(gi.controler_visite(None, None, None, "Autre", AUJ)) == 4
+
+
+def test_couverture_des_visites():
+    v = visites(("a", pd.Timestamp("2026-03-02"), "Chef 1", "Inspection", None), ("a", pd.Timestamp("2026-05-02"), "Chef 1", "Maintenance corrective", None),
+                ("b", pd.Timestamp("2026-03-09"), None, "Urgence", None), ("p", pd.Timestamp("2026-03-09"), "Chef 2", "Maintenance préventive", None),
+                ("c", pd.Timestamp("2025-03-09"), "Chef 2", "Maintenance corrective", None))
+    per = {"a", "b", "c", "d"}
+    k = gi.couverture_visites(v, per)
+    assert (k["visites"], k["centrales"], k["centrales_perimetre"], k["couverture"], k["jamais"]) == (5, 4, 3, 75, 1)
+    assert (k["chefs"], k["sans_chef"]) == (2, 1) and (k["preventives"], k["correctives"], k["urgences"]) == (2, 2, 1)
+    mars = gi.filtrer_visites(v, 2026, 3)
+    k = gi.couverture_visites(mars, per)
+    assert len(mars) == 3 and k["couverture"] == 50 and k["jamais"] == 2
+    assert len(gi.filtrer_visites(v, 2026, None, {"a"})) == 2 and gi.couverture_visites(v, set())["couverture"] is None
+
+
+def test_visites_par_chef_et_par_mois():
+    v = visites(("a", pd.Timestamp("2026-03-02"), "Chef 1", "Inspection", None), ("b", pd.Timestamp("2026-03-12"), "Chef 1", "Inspection", None),
+                ("a", pd.Timestamp("2026-04-02"), "Chef 1", "Inspection", None), ("c", pd.Timestamp("2026-04-05"), None, "Urgence", None))
+    t = gi.visites_par_chef(v).set_index("Chef d'équipe")
+    assert (t.at["Chef 1", "Visites"], t.at["Chef 1", "Sites distincts"]) == (3, 2) and t.at["Chef 1", "Dernière visite"] == pd.Timestamp("2026-04-02")
+    assert t.at[gi.SANS_CHEF, "Visites"] == 1                                          # les visites sans chef restent visibles
+    m = gi.visites_par_mois(v)
+    assert list(m["Visites"]) == [2, 2] and list(m["Sites distincts"]) == [2, 2]
+
+
+EQUIPE_OK = {"nom": "Équipe A", "zone": "ZONE1", "chef": "Chef 1", "telephone": "6 77 00 00 00", "statut": "Active", "membres": "M1, M2"}
+
+
+def test_controle_d_une_equipe():
+    assert gi.controler_equipe(EQUIPE_OK) == []
+    assert "déjà" in gi.controler_equipe(EQUIPE_OK, {"équipe  a"})[0]
+    assert "téléphone" in gi.controler_equipe(EQUIPE_OK | {"telephone": "12"})[0]
+    assert gi.controler_equipe(EQUIPE_OK | {"telephone": None}) == []
+    assert len(gi.controler_equipe({"nom": "", "zone": None, "chef": " ", "statut": "?"})) == 4
+
+
+def _bi_missions():
+    return pd.DataFrame({"id": ["BI-1", "BI-2", "BI-3", "BI-4", "BI-5", "BI-6"], "equipe": ["Équipe A"] * 4 + ["Autre", "Équipe A"],
+                         "date_prevue": [J(-5), J(3), J(10), J(40), J(3), None], "site": ["A"] * 6, "type": ["Préventive"] * 6,
+                         "description": ["x"] * 6, "statut": ["Planifié", "Planifié", "Clôturé", "Terminé", "Planifié", "Planifié"],
+                         "date_fin": [None, None, J(9), J(39), None, None]})
+
+
+def test_missions_et_taux_de_realisation():
+    m = gi.missions_depuis_bi(_bi_missions(), {"Équipe A"}, ["Planifié"], AUJ).set_index("id")
+    assert list(m.index) == ["BI-1", "BI-2", "BI-3", "BI-4"]                           # autre équipe et sans date : écartés
+    assert list(m["statut"]) == ["À venir", "En retard", "Réalisée", "Réalisée"]
+    auj_meme = gi.missions_depuis_bi(_bi_missions().assign(date_prevue=AUJ), {"Équipe A"}, [], AUJ)
+    assert set(auj_meme.loc[auj_meme["statut_bi"] == "Planifié", "statut"]) == {"À venir"}   # prévue aujourd'hui : pas en retard
+    t = gi.taux_realisation(m.reset_index(), AUJ, 30)
+    assert t == {"echues": 2, "realisees": 1, "taux": 50.0}                             # BI-2 et BI-3 ; BI-4 hors fenêtre
+    assert gi.taux_realisation(m.reset_index().iloc[0:0], AUJ)["taux"] is None
+    assert gi.missions_depuis_bi(_bi_missions(), set(), [], AUJ).empty
+
+
+def test_indicateurs_et_tableau_des_equipes():
+    eq = pd.DataFrame([EQUIPE_OK, EQUIPE_OK | {"nom": "Équipe B", "zone": "ZONE9", "chef": "Chef 2", "membres": "M2, Chef 1"},
+                       EQUIPE_OK | {"nom": "Équipe C", "statut": "Inactive", "chef": "Chef 3", "membres": None}], columns=gi.COLONNES_EQUIPES)
+    m = gi.missions_depuis_bi(_bi_missions(), set(eq["nom"]), ["Planifié"], AUJ)
+    k = gi.indicateurs_equipes(eq, m, {"ZONE1", "ZONE2"}, AUJ)
+    assert (k["actives"], k["inactives"], k["personnes"]) == (2, 1, 4)                  # Chef 1, Chef 2, M1, M2 sans doublon
+    assert (k["zones_couvertes"], k["zones"], k["a_venir"], k["en_retard"], k["realisation_taux"]) == (1, 2, 1, 1, 50)
+    v = visites(("a", J(10), "CHEF 1", "Inspection", None), ("b", J(20), "Autre", "Inspection", "Équipe A"),
+                ("a", J(500), "Chef 1", "Inspection", None), ("c", J(5), "Chef 2", "Inspection", None))
+    parc = PARC.assign(responsable=["Chef 1", "chef 1", "Chef 2", None, None, None])
+    t = gi.tableau_equipes(eq, v, m, parc, {"Équipe A": 7}, AUJ).set_index("Équipe")
+    assert (t.at["Équipe A", "Interventions 12 mois"], t.at["Équipe A", "Sites visités"], t.at["Équipe A", "Sites affectés"]) == (2, 2, 2)
+    assert (t.at["Équipe A", "Missions à venir"], t.at["Équipe A", "Missions en retard"], t.at["Équipe A", "Missions réalisées"]) == (1, 1, 2)
+    assert t.at["Équipe A", "Fiches saisies"] == 7 and t.at["Équipe A", "Dernière activité"] == J(9)
+    assert t.at["Équipe B", "Interventions 12 mois"] == 1 and t.at["Équipe C", "Membres"] == 0 and pd.isna(t.at["Équipe C", "Dernière activité"])
+
+
+def test_chefs_sans_equipe():
+    eq = pd.DataFrame([EQUIPE_OK], columns=gi.COLONNES_EQUIPES)
+    v = visites(("a", J(10), "Chef 1", "Inspection", None), ("b", J(20), "m1", "Inspection", None), ("c", J(30), "Ateba", "Inspection", None),
+                ("d", J(5), "Ateba", "Inspection", None), ("e", J(6), "Ateba", "Inspection", None), ("a", J(7), None, "Inspection", None))
+    o = gi.chefs_sans_equipe(v, eq, {"c": "ZONE3", "d": "ZONE3", "e": "ZONE1"})
+    assert list(o["Chef"]) == ["Ateba"] and o["Visites"].iloc[0] == 3 and o["Zone principale"].iloc[0] == "ZONE3" and o["Dernière"].iloc[0] == J(5)
+    assert gi.chefs_sans_equipe(v.iloc[0:1], eq).empty and gi.chefs_sans_equipe(v.iloc[0:0], eq).empty
