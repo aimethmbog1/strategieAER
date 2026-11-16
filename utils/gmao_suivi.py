@@ -113,6 +113,10 @@ def arrets_connus(f: pd.DataFrame, bi: pd.DataFrame) -> pd.DataFrame:
     if len(es):   # un état « à l'arrêt » saisi dans l'application est une occurrence d'arrêt datée
         e = es[es["etat"] == gi.ARRET]
         a = pd.concat([a, pd.DataFrame({"cle_site": e["cle_site"], "date": e["date_effet"]})], ignore_index=True)
+    ep = arrets_declares()
+    if len(ep):   # arrêts déclarés sur la plateforme (ceux dont le début est inconnu ne peuvent pas être datés)
+        ep = ep[ep["debut"].notna()]
+        a = pd.concat([a, pd.DataFrame({"cle_site": ep["cle_site"], "date": ep["debut"]})], ignore_index=True)
     a["date"] = pd.to_datetime(a["date"]).dt.normalize()
     return a.drop_duplicates().reset_index(drop=True)
 
@@ -175,9 +179,20 @@ def _auteur() -> str:
 
 
 def enregistrer_etat(site: str, etat: str, cause: str | None, date_effet, commentaire: str | None,
-                     aujourd_hui: pd.Timestamp) -> bool:
-    """Ajoute un état saisi pour une centrale (contrôlé, tracé au journal de l'application)."""
+                     aujourd_hui: pd.Timestamp, synchroniser_arret: bool = True) -> bool:
+    """Ajoute un état saisi pour une centrale (contrôlé, tracé au journal de l'application).
+
+    Les arrêts suivent (sauf `synchroniser_arret=False`) : passer une centrale « À l'arrêt » ouvre un épisode
+    d'arrêt s'il n'y en a pas en cours ; la repasser en service clôt l'épisode en cours à la date constatée."""
     err = gi.controler_etat(site, etat, date_effet, aujourd_hui, cause)
+    ouvert = None
+    if synchroniser_arret and not err:
+        ep = arrets_declares()
+        o = ep[(ep["cle_site"] == g.cle(site)) & ep["fin"].isna()]
+        ouvert = o.iloc[0] if len(o) else None
+        if ouvert is not None and etat != gi.ARRET and pd.notna(ouvert["debut"]) \
+                and pd.Timestamp(date_effet).normalize() < pd.Timestamp(ouvert["debut"]).normalize():
+            err.append(f"Un arrêt est en cours depuis le {ouvert['debut']:%d/%m/%Y} : la date constatée ne peut pas le précéder.")
     if err:
         raise ValueError("\n".join(err))
     from .storage import mettre_a_jour
@@ -185,7 +200,15 @@ def enregistrer_etat(site: str, etat: str, cause: str | None, date_effet, commen
              "cause": None if gi.est_vide(cause) else str(cause).strip(), "date_effet": pd.Timestamp(date_effet).normalize(),
              "commentaire": None if gi.est_vide(commentaire) else str(commentaire).strip(), "auteur": _auteur()}
     d = pd.concat([etats_saisis(), pd.DataFrame([ligne])], ignore_index=True)
-    return mettre_a_jour(REGISTRE_ETATS, d, f"état de la centrale {ligne['site']} : {etat} au {ligne['date_effet']:%d/%m/%Y}")
+    ok = mettre_a_jour(REGISTRE_ETATS, d, f"état de la centrale {ligne['site']} : {etat} au {ligne['date_effet']:%d/%m/%Y}")
+    if ok and synchroniser_arret:
+        if etat == gi.ARRET and ouvert is None:
+            _ecrire_arret({"site": ligne["site"], "debut": ligne["date_effet"], "cause": ligne["cause"] or "Non précisée",
+                           "commentaire": ligne["commentaire"], "source": "État saisi (date du constat)"})
+        elif etat != gi.ARRET and ouvert is not None:
+            fin = max(ligne["date_effet"], pd.Timestamp(ouvert["debut"])) if pd.notna(ouvert["debut"]) else ligne["date_effet"]
+            _clore_arret(ouvert["id"], fin)
+    return ok
 
 
 def creer_fiche(v: dict, aujourd_hui: pd.Timestamp) -> str:
@@ -197,7 +220,7 @@ def creer_fiche(v: dict, aujourd_hui: pd.Timestamp) -> str:
         raise ValueError("\n".join(err))
     constat = pd.Timestamp(v["date_constat"]).normalize()
     ech = gi.echeance(constat, v["priorite"], delais(), v.get("jours_prevus"))
-    arret = v.get("etat_arrivee") == "À l'arrêt"
+    arret = v.get("etat_arrivee") == "À l'arrêt" or bool(v.get("declarer_arret"))
     cloturee = bool(v.get("cloturee"))
     ligne = {
         "origine": "Suivi de la maintenance", "type": "Corrective", "priorite": gi.PRIORITE_VERS_BI[v["priorite"]],
@@ -209,7 +232,14 @@ def creer_fiche(v: dict, aujourd_hui: pd.Timestamp) -> str:
         "equipe": None if gi.est_vide(v.get("equipe")) else v["equipe"], "chef": None if gi.est_vide(v.get("chef")) else v["chef"],
         "travaux": None if gi.est_vide(v.get("mesure_prise")) else str(v["mesure_prise"]).strip(),
         "qte_affectee": float(v.get("qte_affectee") or 0), "qte_remplacee": float(v.get("qte_remplacee") or 0)}
-    return gc.ajouter("gmao_bi", [ligne], "BI", f"fiche de défaut — {ligne['site']} : {ligne['equipement']} ({v['priorite']})")[0]
+    ident = gc.ajouter("gmao_bi", [ligne], "BI", f"fiche de défaut — {ligne['site']} : {ligne['equipement']} ({v['priorite']})")[0]
+    if v.get("declarer_arret") and not cloturee:
+        # l'arrêt lié à la fiche : le bon d'intervention « centrale à l'arrêt » porte déjà l'état du site
+        ep = arrets_declares()
+        if g.cle(ligne["site"]) not in set(ep.loc[ep["fin"].isna(), "cle_site"]):
+            _ecrire_arret({"site": ligne["site"], "debut": constat, "cause": v.get("cause_arret") or "Non précisée",
+                           "equipe": ligne["equipe"], "source": f"Fiche {ident}", "commentaire": ligne["description"][:200]})
+    return ident
 
 
 def maj_fiche_application(ident: str, statut: str, qte_remplacee: float, mesure_prise: str | None, date_cloture,
@@ -233,6 +263,11 @@ def maj_fiche_application(ident: str, statut: str, qte_remplacee: float, mesure_
     if ferme and bool(l["centrale_arret"]) and pd.isna(l["date_remise"]):
         val["date_remise"] = val["date_fin"]
     gc.modifier("gmao_bi", ident, val, f"fiche {ident} mise à jour : {statut}")
+    if ferme:   # la clôture de la fiche vaut remise en marche pour l'arrêt déclaré avec elle
+        ep = arrets_declares()
+        lie = ep[(ep["source"] == f"Fiche {ident}") & ep["fin"].isna()]
+        if len(lie):
+            _clore_arret(lie.iloc[0]["id"], max(val["date_fin"], lie.iloc[0]["debut"]) if pd.notna(lie.iloc[0]["debut"]) else val["date_fin"])
 
 
 def _controler_cloture(date_constat, ferme: bool, date_cloture, qte_remplacee, qte_affectee, aujourd_hui) -> list[str]:
@@ -279,3 +314,85 @@ def maj_fiche_journal(ligne: int, site: str, cloturer: bool, qte_remplacee: floa
     if mettre_a_jour(gmao_ui.TABLES["defauts"], d, f"fiche du {d.at[ligne, 'source']} — {site} : "
                      + ("clôturée" if cloturer else "mise à jour")):
         t["defauts"] = d
+
+
+# ============================================================================= lot 3 : épisodes d'arrêt
+REGISTRE_ARRETS = "gmao_arrets"
+
+
+def arrets_declares() -> pd.DataFrame:
+    """Épisodes d'arrêt déclarés dans l'application : un début, une fin (vide tant que l'arrêt est en cours)."""
+    from .storage import session_ou_stockage
+    d = session_ou_stockage(REGISTRE_ARRETS, lambda: pd.DataFrame(columns=gi.COLONNES_ARRETS))
+    d = pd.DataFrame(columns=gi.COLONNES_ARRETS) if d is None or len(d) == 0 else d.copy()
+    for c in gi.COLONNES_ARRETS:
+        if c not in d.columns:
+            d[c] = None
+    for c in ("debut", "fin", "horodatage"):
+        d[c] = pd.to_datetime(d[c], errors="coerce")
+    d["date_a_verifier"] = d["date_a_verifier"].fillna(False).astype(bool)
+    return d[gi.COLONNES_ARRETS]
+
+
+def _ecrire_arret(v: dict) -> str:
+    from .storage import mettre_a_jour
+    d = arrets_declares()
+    an = gc.maintenant().year
+    nums = d["id"].dropna().astype(str)
+    nums = nums[nums.str.startswith(f"AR-{an}-")].str.split("-").str[-1].astype(int)
+    ident = f"AR-{an}-{(nums.max() + 1 if len(nums) else 1):04d}"
+    debut = None if v.get("debut") is None or pd.isna(v.get("debut")) else pd.Timestamp(v["debut"])
+    ligne = {"id": ident, "cle_site": g.cle(v["site"]), "site": str(v["site"]).strip(), "debut": debut, "fin": None,
+             "cause": str(v["cause"]).strip(), "commentaire": None if gi.est_vide(v.get("commentaire")) else str(v["commentaire"]).strip(),
+             "equipe": None if gi.est_vide(v.get("equipe")) else str(v["equipe"]).strip(), "source": v.get("source") or "Saisie",
+             "date_a_verifier": bool(v.get("date_a_verifier")) or debut is None, "auteur": _auteur(),
+             "horodatage": pd.Timestamp(gc.maintenant()), "remise_par": None}
+    d = pd.concat([d, pd.DataFrame([ligne])], ignore_index=True)
+    mettre_a_jour(REGISTRE_ARRETS, d, f"arrêt {ident} déclaré — {ligne['site']} : {ligne['cause']}")
+    return ident
+
+
+def _clore_arret(ident: str, fin) -> None:
+    from .storage import mettre_a_jour
+    d = arrets_declares()
+    i = d.index[d["id"].astype(str) == str(ident)]
+    if len(i):
+        d.loc[i[0], "fin"] = pd.Timestamp(fin)
+        d.loc[i[0], "remise_par"] = _auteur()
+        mettre_a_jour(REGISTRE_ARRETS, d, f"arrêt {ident} — {d.loc[i[0], 'site']} : remise en marche le {pd.Timestamp(fin):%d/%m/%Y %H:%M}")
+
+
+def declarer_arret(site: str, debut, cause: str, commentaire: str | None = None, equipe: str | None = None,
+                   source: str = "Saisie", mettre_a_l_arret: bool = True) -> str:
+    """Déclare un arrêt de centrale. Par défaut, la centrale passe aussi « À l'arrêt » (état saisi)."""
+    ep = arrets_declares()
+    err = gi.controler_arret(site, debut, cause, gc.maintenant(), set(ep.loc[ep["fin"].isna(), "cle_site"]))
+    if err:
+        raise ValueError("\n".join(err))
+    ident = _ecrire_arret({"site": site, "debut": debut, "cause": cause, "commentaire": commentaire, "equipe": equipe, "source": source})
+    if mettre_a_l_arret:
+        enregistrer_etat(site, gi.ARRET, cause, pd.Timestamp(debut).normalize(), f"Arrêt {ident}", gc.maintenant(),
+                         synchroniser_arret=False)
+    return ident
+
+
+def remettre_en_marche(ident: str, fin, etat_apres: str | None = gi.H24) -> None:
+    """Enregistre la remise en marche. La centrale repasse à `etat_apres` (None = ne pas toucher à son état)."""
+    ep = arrets_declares()
+    l = ep[ep["id"].astype(str) == str(ident)]
+    if l.empty or pd.notna(l.iloc[0]["fin"]):
+        raise ValueError("Cet arrêt est introuvable ou déjà clos.")
+    l = l.iloc[0]
+    err = gi.controler_remise(l["debut"], fin, gc.maintenant())
+    if err:
+        raise ValueError("\n".join(err))
+    _clore_arret(ident, fin)
+    if etat_apres:
+        enregistrer_etat(l["site"], etat_apres, None, pd.Timestamp(fin).normalize(), f"Remise en marche — arrêt {ident}",
+                         gc.maintenant(), synchroniser_arret=False)
+
+
+def a_l_arret_sans_episode(sites: pd.DataFrame) -> set:
+    """Centrales déclarées « À l'arrêt » sans arrêt en cours saisi : indisponibles sur toute la période."""
+    ep = arrets_declares()
+    return set(sites.loc[sites["etat"] == gi.ARRET, "cle_site"]) - set(ep.loc[ep["fin"].isna(), "cle_site"])

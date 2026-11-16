@@ -305,9 +305,11 @@ def onglet_fiche(sites: pd.DataFrame, ref: pd.DataFrame, auj: pd.Timestamp, equi
         c = st.columns([2, 3])
         dcl = c[0].date_input("Date de clôture (si la fiche est clôturée)", value=auj.date(), max_value=auj.date(), key=f"smf_dcl_{v}",
                               format="DD/MM/YYYY")
-        c[1].caption("Un état « À l'arrêt » à l'arrivée marque le bon d'intervention « centrale à l'arrêt » : la centrale "
-                     "passe à l'arrêt dans l'application tant que la fiche est ouverte. La déclaration d'un épisode "
-                     "d'arrêt daté (avec remise en marche) arrive avec l'onglet « Arrêts et disponibilité ».")
+        cause_arret = c[1].selectbox("Cause de l'arrêt (si un arrêt est déclaré)", gs.reglage("causes_arret", gi.CAUSES_ARRET_DEFAUT),
+                                     index=None, accept_new_options=True, key=f"smf_ca_{v}", placeholder="Non précisée")
+        arret_aussi = st.checkbox("Déclarer aussi un arrêt du site (alimente le calcul de disponibilité)", key=f"smf_arret_{v}",
+                                  help="Ouvre un épisode d'arrêt à la date de constat. Il sera clos à la clôture de la fiche, "
+                                       "ou par une remise en marche dans « Arrêts et disponibilité ».")
         if st.form_submit_button("💾 Enregistrer la fiche", type="primary"):
             try:
                 r = s.set_index("cle_site").loc[k] if k else None
@@ -317,9 +319,190 @@ def onglet_fiche(sites: pd.DataFrame, ref: pd.DataFrame, auj: pd.Timestamp, equi
                     "date_constat": pd.Timestamp(constat), "priorite": prio, "jours_prevus": jours, "categorie": cat,
                     "materiel": mat, "description": desc, "qte_affectee": qa, "qte_remplacee": qr, "etat_arrivee": arrivee,
                     "statut": {"Ouvert": "À planifier", "En cours": "En cours"}.get(statut), "cloturee": statut == "Clôturé",
-                    "date_cloture": pd.Timestamp(dcl), "equipe": equipe, "mesure_prise": mesure}, auj)
+                    "date_cloture": pd.Timestamp(dcl), "equipe": equipe, "mesure_prise": mesure,
+                    "declarer_arret": arret_aussi, "cause_arret": cause_arret}, auj)
                 st.session_state["_smf_n"] = v + 1
                 _ok("_smf_ok", f"Fiche {ident} enregistrée pour {r['site']}"
                     + ("." if ech is None else f" — échéance le {ech:%d/%m/%Y}."))
             except ValueError as e:
                 _erreurs(e)
+
+
+# ============================================================================= ARRÊTS ET DISPONIBILITÉ
+def onglet_arrets(sites: pd.DataFrame, occurrences: pd.DataFrame, equipes: list[str]) -> None:
+    _flash("_sma_ok")
+    maintenant = pd.Timestamp(gc.maintenant())
+    ep = gs.arrets_declares()
+    perimetre = set(sites.loc[sites["etat"].map(gi.GROUPE).isin(["En service H24", "Service partiel", "À l'arrêt"]), "cle_site"])
+    sans_ep = gs.a_l_arret_sans_episode(sites)
+    avec_verif = gs.reglage("arrets_a_verifier_comptes", False)
+    infos = sites.drop_duplicates("cle_site").set_index("cle_site")
+    edition = peut_modifier()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Déclarer un arrêt de site**")
+        if not edition:
+            st.info("🔒 Votre profil ne permet pas de déclarer un arrêt.")
+        else:
+            v = st.session_state.get("_sma_n", 0)
+            s = sites[sites["cle_site"].isin(perimetre)].sort_values("site")
+            lib = dict(zip(s["cle_site"], s["site"] + " (" + s["phase"].astype(str) + ", " + s["region"].astype(str) + ")"))
+            with st.form(f"sma_new_{v}"):
+                k = st.selectbox("Site *", list(lib), format_func=lib.get, index=None, key=f"sma_site_{v}", placeholder="Nom de la centrale…")
+                c = st.columns(2)
+                jour = c[0].date_input("Début de l'arrêt — date *", value=maintenant.date(), max_value=maintenant.date(), key=f"sma_j_{v}", format="DD/MM/YYYY")
+                heure = c[1].time_input("Heure (Douala) *", value=maintenant.time().replace(second=0, microsecond=0), key=f"sma_h_{v}", step=60)
+                c = st.columns(2)
+                cause = c[0].selectbox("Cause *", gs.reglage("causes_arret", gi.CAUSES_ARRET_DEFAUT), index=None, accept_new_options=True,
+                                       key=f"sma_c_{v}", placeholder="Choisir ou saisir…")
+                equipe = c[1].selectbox("Équipe intervenante", equipes, index=None, accept_new_options=True, key=f"sma_eq_{v}",
+                                        placeholder="Facultatif")
+                com = st.text_input("Commentaire", key=f"sma_com_{v}")
+                if st.form_submit_button("🛑 Déclarer l'arrêt", type="primary"):
+                    try:
+                        ident = gs.declarer_arret(None if k is None else infos.at[k, "site"], pd.Timestamp.combine(jour, heure), cause, com, equipe)
+                        st.session_state["_sma_n"] = v + 1
+                        _ok("_sma_ok", f"Arrêt {ident} déclaré pour {infos.at[k, 'site']} ; la centrale passe « À l'arrêt ».")
+                    except ValueError as e:
+                        _erreurs(e)
+    with c2:
+        st.markdown("**Disponibilité du parc**")
+        d30 = gi.disponibilite_parc(ep, perimetre, sans_ep, maintenant - pd.Timedelta(days=30), maintenant, avec_verif)
+        d90 = gi.disponibilite_parc(ep, perimetre, sans_ep, maintenant - pd.Timedelta(days=90), maintenant, avec_verif)
+        enc = gi.arrets_en_cours(ep, maintenant)
+        med = gi.duree_mediane_arrets(ep)
+        kpi_row([("Disponibilité 30 j", n(d30["disponibilite"], 1, " %"), f"{d30['sites_avec_arret']} sites avec arrêt"),
+                 ("Disponibilité 90 j", n(d90["disponibilite"], 1, " %"), f"{d90['sites_avec_arret']} sites avec arrêt"),
+                 ("Arrêts en cours", n(len(enc)), f"+ {len(sans_ep & perimetre)} sites à l'arrêt sans arrêt saisi")])
+        kpi_row([("Épisodes enregistrés", n(len(ep)), None),
+                 ("Durée médiane d'arrêt", n(med["mediane_j"], 1, " j"), f"sur {med['retenus']} arrêt(s) terminé(s)"
+                  + (f" ; {med['ecartes']} écarté(s)" if med["ecartes"] else ""))])
+        st.caption(f"Calcul : 1 − (durée cumulée des arrêts déclarés ÷ ({len(perimetre)} sites × durée de la période)). Les "
+                   f"sites à l'arrêt sans arrêt saisi ({len(sans_ep & perimetre)}) sont comptés indisponibles sur toute la "
+                   "période. " + ("Les arrêts terminés à la date de début « à vérifier » sont comptés." if avec_verif else
+                                  f"Les arrêts terminés à la date de début « à vérifier » sont écartés ({d90['ecartes_a_verifier']} sur 90 j).")
+                   + " Deux arrêts qui se chevauchent sur un même site ne sont comptés qu'une fois.")
+        st.warning("⚠️ " + gi.AVERTISSEMENT_DISPONIBILITE)
+
+    # ---- nombre d'arrêts par site
+    section_title("NOMBRE D'ARRÊTS PAR SITE")
+    annees = sorted({int(a) for a in occurrences["date"].dt.year.dropna().unique()} | {maintenant.year}, reverse=True)
+    c = st.columns([1, 1.5, 1.5, 4])
+    annee = c[0].selectbox("Année", annees, key="sma_an")
+    f_reg = c[1].multiselect("Région", sorted(sites["region"].dropna().unique()), key="sma_reg")
+    f_ph = c[2].multiselect("Phase", sorted(sites["phase"].dropna().unique()), key="sma_ph")
+    c[3].caption("Occurrences = arrêts déclarés sur la plateforme + fiches et bons d'intervention constatant le site à "
+                 "l'arrêt (une seule occurrence par site et par jour).")
+    s = sites
+    for col, val in (("region", f_reg), ("phase", f_ph)):
+        if val:
+            s = s[s[col].isin(val)]
+    occ = occurrences[occurrences["cle_site"].isin(set(s["cle_site"]))]
+    ep_s = ep[ep["cle_site"].isin(set(s["cle_site"]))]
+    rouge, orange = "#B91C1C", "#C2410C"
+
+    def fig_(fig, h=300):
+        fig = plotly_base_layout(fig, height=h)
+        fig.update_layout(separators=", ", legend=dict(orientation="h", y=-0.25), margin=dict(t=40))
+        return fig
+
+    c1, c2 = st.columns(2)
+    with c1:
+        m = gi.arrets_par_mois(occ, annee)
+        fig = px.bar(m, x="Mois", y=["Arrêts", "Sites distincts"], barmode="group", title=f"Arrêts par mois — {annee}",
+                     color_discrete_map={"Arrêts": rouge, "Sites distincts": orange}, labels={"value": "", "variable": ""})
+        st.plotly_chart(fig_(fig), width="stretch")
+    with c2:
+        a = gi.arrets_par_an(occ)
+        if a.empty:
+            st.info("Aucune occurrence d'arrêt datée.")
+        else:
+            fig = px.bar(a.astype({"Année": str}), x="Année", y=["Arrêts", "Sites distincts"], barmode="group", title="Arrêts par an",
+                         color_discrete_map={"Arrêts": rouge, "Sites distincts": orange}, labels={"value": "", "variable": ""})
+            st.plotly_chart(fig_(fig), width="stretch")
+    c1, c2 = st.columns(2)
+    with c1:
+        if ep_s.empty:
+            st.info("Causes des arrêts déclarés : aucun arrêt déclaré sur la plateforme pour cette sélection.")
+        else:
+            ca = gi.causes_arrets(ep_s).sort_values("Arrêts")
+            fig = px.bar(ca, y="Cause", x="Arrêts", orientation="h", title="Causes des arrêts déclarés", color_discrete_sequence=[rouge])
+            st.plotly_chart(fig_(fig), width="stretch")
+    with c2:
+        de = gi.duree_arret_par_equipe(ep_s, maintenant)
+        if de.empty:
+            st.info("Durée cumulée d'arrêt par équipe : aucun arrêt déclaré n'indique d'équipe intervenante.")
+        else:
+            fig = px.bar(de, x="Équipe", y="Jours d'arrêt", title="Durée cumulée d'arrêt par équipe intervenante (jours)",
+                         color_discrete_sequence=[orange])
+            st.plotly_chart(fig_(fig), width="stretch")
+    mat = gi.matrice_arrets(occ, s, annee)
+    if mat.empty:
+        st.info("Aucune occurrence d'arrêt pour cette sélection.")
+    else:
+        st.caption(f"{len(mat)} site(s) avec au moins une occurrence d'arrêt, du plus au moins touché en {annee}.")
+        num = [c_ for c_ in mat.columns if c_ not in ("Site", "Région", "Phase")]
+        vue_m = mat.copy()
+        vue_m[num] = vue_m[num].astype(object).where(mat[num] != 0, "")       # cases vides plutôt que des zéros
+        st.dataframe(vue_m.astype({c_: str for c_ in num}), hide_index=True, width="stretch", height=360)
+
+    # ---- arrêts en cours
+    section_title("ARRÊTS EN COURS")
+    if enc.empty:
+        st.info("Aucun arrêt en cours déclaré sur la plateforme.")
+    else:
+        vue = pd.DataFrame({
+            "N°": enc["id"], "Site": enc["site"], "Région": enc["cle_site"].map(infos["region"]), "Zone": enc["cle_site"].map(infos["zone"]),
+            "Depuis": enc["debut"], "Date": enc["date_a_verifier"].map({True: "⚠️ à vérifier", False: ""}),
+            "Durée (j)": enc["duree_j"], "Cause": enc["cause"], "Équipe": enc["equipe"], "Source": enc["source"]})
+        st.dataframe(vue, hide_index=True, width="stretch",
+                     column_config={"Depuis": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm"),
+                                    "Durée (j)": st.column_config.NumberColumn(format="%.1f j")})
+        if edition:
+            lib = {r.id: f"{r.id} — {r.site} — depuis le " + ("date inconnue" if pd.isna(r.debut) else f"{r.debut:%d/%m/%Y %H:%M}")
+                   for r in enc.itertuples()}
+            with st.form("sma_remise"):
+                st.markdown("**Remise en marche**")
+                c = st.columns([3, 1.3, 1, 1.6, 1.2])
+                ident = c[0].selectbox("Arrêt", list(lib), format_func=lib.get, key="sma_r_id")
+                rj = c[1].date_input("Date", value=maintenant.date(), max_value=maintenant.date(), key="sma_r_j", format="DD/MM/YYYY")
+                rh = c[2].time_input("Heure", value=maintenant.time().replace(second=0, microsecond=0), key="sma_r_h", step=60)
+                apres = c[3].selectbox("État après remise", [gi.H24, gi.A_VIDE, gi.AVANT_18H, gi.APRES_18H], key="sma_r_e")
+                c[4].write("")
+                if c[4].form_submit_button("✅ Valider", type="primary"):
+                    try:
+                        gs.remettre_en_marche(ident, pd.Timestamp.combine(rj, rh), apres)
+                        _ok("_sma_ok", f"Remise en marche enregistrée pour l'arrêt {ident} ; la centrale repasse « {apres} ».")
+                    except ValueError as e:
+                        _erreurs(e)
+    reste = sites[sites["cle_site"].isin(sans_ep & perimetre)]
+    if len(reste):
+        with st.expander(f"⚠️ {len(reste)} centrale(s) à l'arrêt sans arrêt saisi — début inconnu (date à vérifier)"):
+            st.caption("Ces centrales sont déclarées à l'arrêt (journal, état saisi ou bon d'intervention) mais aucun arrêt daté "
+                       "n'a été déclaré : elles sont comptées indisponibles sur toute la période. Pour dater l'arrêt, déclare-le "
+                       "ci-dessus ; si la centrale a redémarré, mets à jour son état dans « Parc de sites ».")
+            st.dataframe(reste[["site", "phase", "region", "zone", "kwc", "cause", "etat_source", "etat_date"]].rename(columns={
+                "site": "Site", "phase": "Phase", "region": "Région", "zone": "Zone", "kwc": "kWc", "cause": "Cause déclarée",
+                "etat_source": "Source de l'état", "etat_date": "État constaté le"}), hide_index=True, width="stretch", height=300,
+                column_config={"État constaté le": st.column_config.DateColumn(**DATE)})
+
+    # ---- historique
+    section_title("HISTORIQUE DES ARRÊTS DÉCLARÉS (12 DERNIERS MOIS)")
+    h = ep[ep["debut"].isna() | (ep["debut"] >= maintenant - pd.DateOffset(months=12))].sort_values("debut", ascending=False, na_position="last")
+    if h.empty:
+        st.info("Aucun arrêt déclaré sur la plateforme. L'historique se constitue à partir des déclarations ci-dessus, des "
+                "changements d'état saisis et de la case « Déclarer aussi un arrêt » des fiches.")
+        return
+    duree = ((h["fin"].fillna(maintenant) - h["debut"]).dt.total_seconds() / 86400).round(1)
+    vue = pd.DataFrame({"N°": h["id"], "Site": h["site"], "Début": h["debut"], "Fin": h["fin"],
+                        "État": h["fin"].map(lambda x: "en cours" if pd.isna(x) else "terminé"), "Durée (j)": duree,
+                        "Date": h["date_a_verifier"].map({True: "⚠️ à vérifier", False: ""}), "Cause": h["cause"],
+                        "Équipe": h["equipe"], "Source": h["source"], "Commentaire": h["commentaire"], "Déclaré par": h["auteur"]})
+    st.dataframe(vue, hide_index=True, width="stretch", height=340,
+                 column_config={"Début": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm"),
+                                "Fin": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm"),
+                                "Durée (j)": st.column_config.NumberColumn(format="%.1f j")})
+    buf = io.BytesIO()
+    vue.to_excel(buf, index=False)
+    st.download_button("⬇️ Exporter l'historique (Excel)", buf.getvalue(), "arrets_declares.xlsx", key="sma_dl")

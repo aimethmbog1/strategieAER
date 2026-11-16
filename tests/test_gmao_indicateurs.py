@@ -378,3 +378,109 @@ def test_table_des_sites():
     assert t.at["c", "Dernière visite"] == J(10) and t.at["c", "Dernier défaut"] == J(10)
     assert t.at["a", "Ouverts"] == 0 and t.at["a", "Dernier défaut"] == J(70) and pd.isna(t.at["p", "Dernière visite"])
     assert len(t) == len(PARC)
+
+
+# ============================================================================= lot 3 : arrêts et disponibilité
+H = lambda n: AUJ - pd.Timedelta(hours=n)  # noqa: E731
+
+
+def episodes(*lignes):
+    """(cle_site, début, fin, date à vérifier, cause, équipe)"""
+    d = pd.DataFrame([{"id": f"AR-{i}", "cle_site": k, "site": k.upper(), "debut": deb, "fin": fin, "cause": cause,
+                       "commentaire": None, "equipe": eq, "source": "Saisie", "date_a_verifier": verif, "auteur": "x",
+                       "horodatage": AUJ, "remise_par": None}
+                      for i, (k, deb, fin, verif, cause, eq) in enumerate(lignes)], columns=gi.COLONNES_ARRETS)
+    for c in ("debut", "fin"):
+        d[c] = pd.to_datetime(d[c])
+    d["date_a_verifier"] = d["date_a_verifier"].astype(bool)
+    return d
+
+
+def test_heures_indisponibles_union_et_bornes():
+    d, f = J(10), AUJ                                            # période de 240 h
+    assert gi.heures_indisponibles([(J(2), J(1))], d, f) == 24
+    assert gi.heures_indisponibles([(J(2), J(1)), (J(2), J(1))], d, f) == 24             # doublon : compté une fois
+    assert gi.heures_indisponibles([(J(4), J(2)), (J(3), J(1))], d, f) == 72             # chevauchement : union
+    assert gi.heures_indisponibles([(J(20), J(9))], d, f) == 24                          # rogné au début de la période
+    assert gi.heures_indisponibles([(J(1), None)], d, f) == 24                           # en cours : jusqu'à la fin
+    assert gi.heures_indisponibles([(None, None)], d, f) == 240                          # début inconnu, en cours
+    assert gi.heures_indisponibles([(J(30), J(20))], d, f) == 0 and gi.heures_indisponibles([], d, f) == 0
+
+
+def test_disponibilite_du_parc():
+    per = {"a", "b", "c", "d"}                                   # 4 sites × 10 jours = 960 h
+    ep = episodes(("a", J(2), J(1), False, "Vandalisme", "E1"),              # 24 h
+                  ("b", J(5), None, False, "Météo", None),                   # en cours : 120 h
+                  ("z", J(5), None, False, "Hors périmètre", None))
+    r = gi.disponibilite_parc(ep, per, set(), J(10), AUJ)
+    assert r["heures_arret"] == 144 and r["disponibilite"] == pytest.approx(100 * (1 - 144 / 960))
+    assert r["sites"] == 4 and r["sites_avec_arret"] == 2 and r["sites_toute_la_periode"] == 0
+    # un site déclaré à l'arrêt sans arrêt saisi est indisponible sur toute la période
+    r = gi.disponibilite_parc(ep, per, {"c", "hors"}, J(10), AUJ)
+    assert r["heures_arret"] == 144 + 240 and r["sites_toute_la_periode"] == 1
+    assert r["disponibilite"] == pytest.approx(100 * (1 - 384 / 960))
+    vide = gi.disponibilite_parc(episodes(), per, set(), J(10), AUJ)
+    assert vide["disponibilite"] == 100 and gi.disponibilite_parc(ep, set(), set(), J(10), AUJ)["disponibilite"] is None
+
+
+def test_disponibilite_et_dates_a_verifier():
+    per = {"a", "b"}                                             # 2 sites × 10 jours = 480 h
+    ep = episodes(("a", pd.Timestamp("2019-01-01"), J(5), True, "Autre", None),          # clos, date par défaut
+                  ("b", pd.Timestamp("2019-01-01"), None, True, "Autre", None))          # en cours, date par défaut
+    r = gi.disponibilite_parc(ep, per, set(), J(10), AUJ)
+    assert r["ecartes_a_verifier"] == 1 and r["heures_arret"] == 240                      # seul l'arrêt en cours compte
+    assert r["disponibilite"] == 50
+    r = gi.disponibilite_parc(ep, per, set(), J(10), AUJ, compter_dates_a_verifier=True)
+    assert r["ecartes_a_verifier"] == 0 and r["heures_arret"] == 240 + 120
+    ancien = episodes(("a", pd.Timestamp("2019-01-01"), J(50), True, "Autre", None))      # clos avant la période
+    assert gi.disponibilite_parc(ancien, per, set(), J(10), AUJ)["ecartes_a_verifier"] == 0
+
+
+def test_controle_de_la_declaration_d_arret():
+    assert gi.controler_arret("Site A", H(2), "Vandalisme", AUJ, set()) == []
+    assert "futur" in gi.controler_arret("Site A", AUJ + pd.Timedelta(hours=1), "x", AUJ)[0]
+    assert "déjà en cours" in gi.controler_arret("Site A", H(2), "x", AUJ, {"sitea"})[0]
+    assert "cause" in gi.controler_arret("Site A", H(2), " ", AUJ)[0]
+    assert len(gi.controler_arret(None, None, None, AUJ)) == 3
+
+
+def test_controle_de_la_remise_en_marche():
+    assert gi.controler_remise(H(10), H(2), AUJ) == []
+    assert gi.controler_remise(None, H(2), AUJ) == []                                    # début inconnu : pas de comparaison
+    assert "précède" in gi.controler_remise(H(2), H(10), AUJ)[0]
+    assert "futur" in gi.controler_remise(H(10), AUJ + pd.Timedelta(minutes=5), AUJ)[0]
+    assert "Renseigne" in gi.controler_remise(H(10), None, AUJ)[0]
+
+
+def test_arrets_en_cours_et_duree_mediane():
+    ep = episodes(("a", J(4), J(2), False, "x", None), ("b", J(10), J(4), False, "x", None),      # 2 j et 6 j
+                  ("c", pd.Timestamp("2019-01-01"), J(1), True, "x", None),                        # date à vérifier : écarté
+                  ("d", J(3), None, False, "x", None), ("e", pd.NaT, None, True, "x", None))
+    enc = gi.arrets_en_cours(ep, AUJ)
+    assert list(enc["cle_site"]) == ["e", "d"] and pd.isna(enc["duree_j"].iloc[0]) and enc["duree_j"].iloc[1] == 3
+    assert gi.duree_mediane_arrets(ep) == {"mediane_j": 4.0, "retenus": 2, "ecartes": 1}
+    assert gi.duree_mediane_arrets(episodes())["mediane_j"] is None
+
+
+def test_series_d_arrets():
+    occ = pd.DataFrame({"cle_site": ["a", "a", "c", "c", "a"],
+                        "date": pd.to_datetime(["2026-03-02", "2026-03-20", "2026-03-05", "2025-07-01", "2026-11-10"])})
+    m = gi.arrets_par_mois(occ, 2026).set_index("Mois")
+    assert len(m) == 12 and (m.at["Mar", "Arrêts"], m.at["Mar", "Sites distincts"]) == (3, 2) and m.at["Jan", "Arrêts"] == 0
+    a = gi.arrets_par_an(occ).set_index("Année")
+    assert (a.at[2026, "Arrêts"], a.at[2026, "Sites distincts"], a.at[2025, "Arrêts"]) == (4, 2, 1)
+    t = gi.matrice_arrets(occ, PARC, 2026).set_index("Site")
+    assert list(t.index) == ["A", "C"] and (t.at["A", "Total 2026"], t.at["A", "Mar 26"], t.at["A", "Nov 26"]) == (3, 2, 1)
+    assert (t.at["C", "Total 2025"], t.at["C", "Total 2026"]) == (1, 1) and t.at["A", "Total 2025"] == 0
+    assert gi.matrice_arrets(occ[occ["cle_site"] == "zzz"], PARC, 2026).empty and gi.arrets_par_an(occ.iloc[0:0]).empty
+
+
+def test_causes_et_duree_par_equipe():
+    ep = episodes(("a", J(4), J(2), False, "Vandalisme", "Équipe B"), ("b", J(3), None, False, "Vandalisme", "Équipe B "),
+                  ("c", J(5), J(4), False, None, "Équipe K"), ("d", pd.NaT, None, True, " ", "Équipe K"),
+                  ("e", J(9), J(1), False, "Météo", None))
+    c = gi.causes_arrets(ep).set_index("Cause")["Arrêts"]
+    assert c["Vandalisme"] == 2 and c["Non précisée"] == 2 and c["Météo"] == 1
+    d = gi.duree_arret_par_equipe(ep, AUJ).set_index("Équipe")
+    assert list(d.index) == ["Équipe B", "Équipe K"]                         # sans équipe ou sans début : non attribué
+    assert d.at["Équipe B", "Jours d'arrêt"] == 5 and d.at["Équipe B", "Arrêts"] == 2 and d.at["Équipe K", "Jours d'arrêt"] == 1

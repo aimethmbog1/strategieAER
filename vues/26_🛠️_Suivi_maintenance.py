@@ -67,8 +67,9 @@ if f0.empty and (sites["etat"] == gi.NON_RENSEIGNE).all():
 
 arrets = gs.arrets_connus(f0, bi)
 visites = gs.visites_connues(f0, bi)
-t_vue, t_parc, t_back, t_fiche, t_par = st.tabs(["📊 Vue d'ensemble", "🏭 Parc de sites", "📋 Backlog", "➕ Nouvelle fiche",
-                                                "⚙️ Paramètres"])
+EQUIPES = sorted({str(x) for x in sites["responsable"].dropna()}) + ["Prestataire / autre"]
+t_vue, t_parc, t_back, t_fiche, t_arr, t_par = st.tabs(["📊 Vue d'ensemble", "🏭 Parc de sites", "📋 Backlog", "➕ Nouvelle fiche",
+                                                       "🛑 Arrêts et disponibilité", "⚙️ Paramètres"])
 
 # ============================================================================= VUE D'ENSEMBLE
 with t_vue:
@@ -312,16 +313,16 @@ with t_vue:
             st.caption("Ces noms ne se retrouvent pas tels quels dans le référentiel des sites (orthographe différente "
                        "ou site manquant). Elles sont comptées ici d'après les journaux, mais restent à rapprocher.")
             st.write(", ".join(absents_ref))
-    st.caption("Les onglets Arrêts et disponibilité, puis Visites, arrivent aux lots suivants ; Stocks et Équipes "
-               "étendront les modules du GMAO.")
+    st.caption("L'onglet Visites arrive au lot suivant ; Stocks et Équipes étendront les modules du GMAO.")
 
 with t_parc:
     gsu.onglet_parc(sites, f0, arrets, visites, ref, auj)
 with t_back:
     gsu.onglet_backlog(sites, f0, auj)
 with t_fiche:
-    gsu.onglet_fiche(sites, ref, auj, sorted({str(x) for x in sites["responsable"].dropna()}) + ["Prestataire / autre"],
-                     list(f0["materiel"].unique()))
+    gsu.onglet_fiche(sites, ref, auj, EQUIPES, list(f0["materiel"].unique()))
+with t_arr:
+    gsu.onglet_arrets(sites, arrets, EQUIPES)
 
 # ============================================================================= PARAMÈTRES
 with t_par:
@@ -362,6 +363,9 @@ with t_par:
         n_int = c[2].number_input("Indice d'interruption : constat d'arrêt de moins de (jours)", 1, 720,
                                   int(gs.reglage("interruption_jours", 90)), key="sm_int", disabled=not edition)
         n_sup = c[3].number_input("Supervision déconnectée au-delà de (jours)", 1, 90, seuil_sup, key="sm_sup", disabled=not edition)
+        verif = st.checkbox("Disponibilité : compter aussi les arrêts terminés dont la date de début est « à vérifier »",
+                            value=bool(gs.reglage("arrets_a_verifier_comptes", False)), key="sm_verif", disabled=not edition,
+                            help="Décoché (par défaut) : ces arrêts sont écartés du calcul et leur nombre est affiché.")
         causes_txt = st.text_area("Causes d'arrêt proposées à la saisie (une par ligne)", height=150, key="sm_causes", disabled=not edition,
                                   value="\n".join(gs.reglage("causes_arret", gi.CAUSES_ARRET_DEFAUT)))
         if st.form_submit_button("💾 Enregistrer les paramètres", type="primary", disabled=not edition):
@@ -374,6 +378,7 @@ with t_par:
                           "seuil_tres_expose": int(seuil_te)},
                 "seuil_recidive": int(n_rec), "puissance_cible": float(n_cible) or None,
                 "interruption_jours": int(n_int), "supervision_seuil_j": int(n_sup),
+                "arrets_a_verifier_comptes": bool(verif),
                 "causes_arret": [x.strip() for x in causes_txt.split("\n") if x.strip()] or gi.CAUSES_ARRET_DEFAUT})
             st.session_state["_sm_ok"] = "Paramètres enregistrés."
             st.rerun()

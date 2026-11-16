@@ -598,6 +598,160 @@ def table_sites(sites: pd.DataFrame, f: pd.DataFrame, arrets: pd.DataFrame, visi
     return out.reset_index(drop=True)
 
 
+# ============================================================================= lot 3 : arrêts et disponibilité
+COLONNES_ARRETS = ["id", "cle_site", "site", "debut", "fin", "cause", "commentaire", "equipe", "source",
+                   "date_a_verifier", "auteur", "horodatage", "remise_par"]
+MOIS_COURTS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+AVERTISSEMENT_DISPONIBILITE = ("Le calcul n'est fiable que si chaque arrêt et chaque remise en marche sont saisis.")
+
+
+def controler_arret(site, debut, cause, maintenant: pd.Timestamp, sites_deja_a_l_arret: set | None = None) -> list[str]:
+    """Anomalies bloquantes d'une déclaration d'arrêt."""
+    err = []
+    if est_vide(site):
+        err.append("Choisis la centrale à l'arrêt.")
+    elif sites_deja_a_l_arret and cle(site) in sites_deja_a_l_arret:
+        err.append("Un arrêt est déjà en cours pour cette centrale : enregistre d'abord sa remise en marche.")
+    if debut is None or pd.isna(debut):
+        err.append("Renseigne la date et l'heure du début de l'arrêt.")
+    elif pd.Timestamp(debut) > pd.Timestamp(maintenant):
+        err.append("Le début de l'arrêt ne peut pas être dans le futur.")
+    if est_vide(cause):
+        err.append("Indique la cause de l'arrêt (ou « Non précisée »).")
+    return err
+
+
+def controler_remise(debut, fin, maintenant: pd.Timestamp) -> list[str]:
+    """Anomalies bloquantes d'une remise en marche."""
+    if fin is None or pd.isna(fin):
+        return ["Renseigne la date et l'heure de la remise en marche."]
+    err = []
+    if pd.Timestamp(fin) > pd.Timestamp(maintenant):
+        err.append("La remise en marche ne peut pas être dans le futur.")
+    if debut is not None and not pd.isna(debut) and pd.Timestamp(fin) < pd.Timestamp(debut):
+        err.append("La remise en marche précède le début de l'arrêt.")
+    return err
+
+
+def heures_indisponibles(intervalles: list[tuple], debut: pd.Timestamp, fin: pd.Timestamp) -> float:
+    """Heures d'arrêt d'UN site dans la période [debut, fin] : union des intervalles (deux arrêts qui se
+    chevauchent ne sont pas comptés deux fois). Une fin absente = arrêt encore en cours ; un début absent
+    (date inconnue) = arrêt antérieur à la période."""
+    bornes = []
+    for d, f_ in intervalles:
+        d = debut if d is None or pd.isna(d) else max(pd.Timestamp(d), debut)
+        f_ = fin if f_ is None or pd.isna(f_) else min(pd.Timestamp(f_), fin)
+        if f_ > d:
+            bornes.append((d, f_))
+    total, courant = 0.0, None
+    for d, f_ in sorted(bornes):
+        if courant is None or d > courant[1]:
+            if courant is not None:
+                total += (courant[1] - courant[0]).total_seconds()
+            courant = [d, f_]
+        else:
+            courant[1] = max(courant[1], f_)
+    if courant is not None:
+        total += (courant[1] - courant[0]).total_seconds()
+    return total / 3600
+
+
+def disponibilite_parc(episodes: pd.DataFrame, perimetre: set, a_l_arret_sans_episode: set, debut: pd.Timestamp,
+                       fin: pd.Timestamp, compter_dates_a_verifier: bool = False) -> dict:
+    """Disponibilité du parc = 1 − (durée cumulée des arrêts ÷ (sites du périmètre × durée de la période)).
+
+    - `perimetre` : centrales mises en service ; `a_l_arret_sans_episode` : centrales déclarées à l'arrêt sans
+      arrêt en cours saisi — elles sont comptées indisponibles sur TOUTE la période.
+    - Un arrêt CLOS dont la date de début est « à vérifier » est écarté du calcul (et compté à part), sauf si
+      `compter_dates_a_verifier`. Un arrêt EN COURS à la date à vérifier est compté sur toute la période, comme
+      un site à l'arrêt sans arrêt saisi : seul son début est incertain, pas l'arrêt."""
+    duree_h = (pd.Timestamp(fin) - pd.Timestamp(debut)).total_seconds() / 3600
+    n = len(perimetre)
+    if n == 0 or duree_h <= 0:
+        return {"disponibilite": None, "heures_arret": 0.0, "sites": n, "ecartes_a_verifier": 0, "sites_toute_la_periode": 0,
+                "sites_avec_arret": 0}
+    e = episodes[episodes["cle_site"].isin(perimetre)] if len(episodes) else episodes
+    ecartes = 0
+    par_site: dict[str, list] = {}
+    for r in e.itertuples():
+        a_verifier = bool(r.date_a_verifier) or pd.isna(r.debut)
+        if a_verifier and pd.notna(r.fin) and not compter_dates_a_verifier:
+            if pd.Timestamp(r.fin) > debut:
+                ecartes += 1
+            continue
+        par_site.setdefault(r.cle_site, []).append((None if a_verifier and pd.isna(r.fin) else r.debut, r.fin))
+    for k in a_l_arret_sans_episode & perimetre:
+        par_site.setdefault(k, []).append((None, None))
+    heures = {k: heures_indisponibles(v, debut, fin) for k, v in par_site.items()}
+    total = sum(heures.values())
+    return {"disponibilite": 100 * (1 - total / (n * duree_h)), "heures_arret": total, "sites": n,
+            "ecartes_a_verifier": ecartes, "sites_avec_arret": sum(1 for h in heures.values() if h > 0),
+            "sites_toute_la_periode": sum(1 for h in heures.values() if h >= duree_h - 1e-6)}
+
+
+def arrets_en_cours(episodes: pd.DataFrame, maintenant: pd.Timestamp) -> pd.DataFrame:
+    """Arrêts sans remise en marche, avec leur durée en jours (absente si la date de début est inconnue)."""
+    e = episodes[episodes["fin"].isna()].copy()
+    e["duree_j"] = ((pd.Timestamp(maintenant) - e["debut"]).dt.total_seconds() / 86400).round(1)
+    return e.sort_values("debut", na_position="first").reset_index(drop=True)
+
+
+def duree_mediane_arrets(episodes: pd.DataFrame) -> dict:
+    """Durée médiane (jours) des arrêts terminés aux dates fiables ; les autres sont comptés à part."""
+    clos = episodes[episodes["fin"].notna()]
+    ok = clos[clos["debut"].notna() & ~clos["date_a_verifier"].astype(bool) & (clos["fin"] >= clos["debut"])]
+    d = (ok["fin"] - ok["debut"]).dt.total_seconds() / 86400
+    return {"mediane_j": float(d.median()) if len(d) else None, "retenus": int(len(d)), "ecartes": int(len(clos) - len(d))}
+
+
+def arrets_par_mois(occurrences: pd.DataFrame, annee: int) -> pd.DataFrame:
+    """Occurrences d'arrêt et sites distincts pour chaque mois de l'année (les 12 mois sont toujours présents)."""
+    o = occurrences[occurrences["date"].dt.year == annee]
+    g_ = o.groupby(o["date"].dt.month)
+    t = pd.DataFrame({"Arrêts": g_.size(), "Sites distincts": g_["cle_site"].nunique()}).reindex(range(1, 13), fill_value=0)
+    return t.assign(Mois=MOIS_COURTS).reset_index(drop=True)[["Mois", "Arrêts", "Sites distincts"]]
+
+
+def arrets_par_an(occurrences: pd.DataFrame) -> pd.DataFrame:
+    g_ = occurrences.groupby(occurrences["date"].dt.year)
+    t = pd.DataFrame({"Arrêts": g_.size(), "Sites distincts": g_["cle_site"].nunique()})
+    return t.reset_index(names="Année").astype({"Année": int}) if len(t) else pd.DataFrame(columns=["Année", "Arrêts", "Sites distincts"])
+
+
+def matrice_arrets(occurrences: pd.DataFrame, sites: pd.DataFrame, annee: int) -> pd.DataFrame:
+    """Par site : total d'arrêts de chaque année, puis détail par mois de l'année choisie. Sites triés du plus
+    au moins touché sur l'année choisie ; seuls les sites ayant au moins une occurrence apparaissent."""
+    o = occurrences[occurrences["cle_site"].isin(set(sites["cle_site"]))]
+    if o.empty:
+        return pd.DataFrame()
+    an = pd.crosstab(o["cle_site"], o["date"].dt.year)
+    an.columns = [f"Total {int(c)}" for c in an.columns]
+    oa = o[o["date"].dt.year == annee]
+    mois = pd.crosstab(oa["cle_site"], oa["date"].dt.month).reindex(columns=range(1, 13), fill_value=0)
+    mois.columns = [f"{m} {str(annee)[-2:]}" for m in MOIS_COURTS]
+    info = sites.drop_duplicates("cle_site").set_index("cle_site")[["site", "region", "phase"]].rename(
+        columns={"site": "Site", "region": "Région", "phase": "Phase"})
+    t = info.join(an, how="inner").join(mois).fillna(0)
+    num = [c for c in t.columns if c not in ("Site", "Région", "Phase")]
+    t[num] = t[num].astype(int)
+    tri = f"Total {annee}" if f"Total {annee}" in t.columns else num[-1]
+    return t.sort_values([tri, "Site"], ascending=[False, True]).reset_index(drop=True)
+
+
+def causes_arrets(episodes: pd.DataFrame) -> pd.DataFrame:
+    c = episodes["cause"].map(lambda x: "Non précisée" if est_vide(x) else str(x).strip())
+    return c.value_counts().rename_axis("Cause").reset_index(name="Arrêts")
+
+
+def duree_arret_par_equipe(episodes: pd.DataFrame, maintenant: pd.Timestamp) -> pd.DataFrame:
+    """Durée cumulée d'arrêt (jours) des sites par équipe intervenante ; les arrêts en cours comptent jusqu'à
+    maintenant ; ceux sans début connu ou sans équipe ne peuvent pas être attribués."""
+    e = episodes[episodes["debut"].notna() & ~episodes["equipe"].map(est_vide)]
+    d = ((e["fin"].fillna(pd.Timestamp(maintenant)) - e["debut"]).dt.total_seconds() / 86400).clip(lower=0)
+    t = d.groupby(e["equipe"].astype(str).str.strip()).agg(["sum", "size"]).rename(columns={"sum": "Jours d'arrêt", "size": "Arrêts"})
+    return t.sort_values("Jours d'arrêt", ascending=False).reset_index(names="Équipe")
+
+
 def maintenant_douala() -> pd.Timestamp:
     from zoneinfo import ZoneInfo
     return pd.Timestamp(datetime.now(ZoneInfo("Africa/Douala")).replace(tzinfo=None)).normalize()
