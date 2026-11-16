@@ -74,16 +74,24 @@ def sites_suivis(ref_sites: pd.DataFrame, bi: pd.DataFrame) -> tuple[pd.DataFram
                                 "region": r3["Région"], "kwc": pd.to_numeric(r3["Puissance (kWc)"], errors="coerce").fillna(0),
                                 "etat": gi.NON_MES if not st_.empty else gi.NON_RENSEIGNE, "cause": None}))
     s = pd.concat(lignes, ignore_index=True).drop_duplicates("cle_site")
-    if bi is not None and len(bi):
-        arr = set(bi.loc[bi["statut"].isin(gc.STATUTS_BI_OUVERTS) & bi["centrale_arret"], "site"].map(g.cle))
-        m = s["cle_site"].isin(arr) & (s["etat"] != gi.ARRET)
-        s.loc[m, "cause"] = "Bon d'intervention ouvert : centrale à l'arrêt"
-        s.loc[m, "etat"] = gi.ARRET
     s["zone"], s["responsable"] = None, None
     if aff is not None and not aff.empty:
         a = aff.sort_values("annee").assign(cle_site=aff["site"].map(g.cle)).drop_duplicates("cle_site", keep="last").set_index("cle_site")
         s["zone"], s["responsable"] = s["cle_site"].map(a["zone"]), s["cle_site"].map(a["responsable"])
-    return s[cols].reset_index(drop=True), absents
+    s = gi.appliquer_etats_saisis(s[cols].reset_index(drop=True), etats_saisis())
+    if bi is not None and len(bi):
+        # Un bon d'intervention correctif ouvert « centrale à l'arrêt » impose l'arrêt, sauf si un état a été
+        # saisi APRÈS la date d'arrêt du bon : l'information la plus récente l'emporte.
+        o = bi[bi["statut"].isin(gc.STATUTS_BI_OUVERTS) & bi["centrale_arret"]]
+        if o.empty:
+            return s, absents
+        d = o.assign(cle_site=o["site"].map(g.cle), _d=pd.to_datetime(o["date_arret"].fillna(o["date_creation"]))).groupby("cle_site")["_d"].max()
+        dbi = pd.to_datetime(s["cle_site"].map(d.to_dict()))
+        m = s["cle_site"].isin(d.index) & (s["etat"] != gi.ARRET) & ~(s["etat_date"].notna() & dbi.notna() & (s["etat_date"] > dbi))
+        s.loc[m, "cause"] = "Bon d'intervention ouvert : centrale à l'arrêt"
+        s.loc[m, "etat"], s.loc[m, "etat_source"] = gi.ARRET, "Bon d'intervention"
+        s.loc[m, "etat_date"] = dbi[m]
+    return s, absents
 
 
 def fiches(aujourd_hui: pd.Timestamp, bi: pd.DataFrame) -> pd.DataFrame:
@@ -101,6 +109,10 @@ def arrets_connus(f: pd.DataFrame, bi: pd.DataFrame) -> pd.DataFrame:
     if bi is not None and len(bi):
         b = bi[bi["centrale_arret"] & bi["date_arret"].notna()]
         a = pd.concat([a, pd.DataFrame({"cle_site": b["site"].map(g.cle), "date": b["date_arret"]})], ignore_index=True)
+    es = etats_saisis()
+    if len(es):   # un état « à l'arrêt » saisi dans l'application est une occurrence d'arrêt datée
+        e = es[es["etat"] == gi.ARRET]
+        a = pd.concat([a, pd.DataFrame({"cle_site": e["cle_site"], "date": e["date_effet"]})], ignore_index=True)
     a["date"] = pd.to_datetime(a["date"]).dt.normalize()
     return a.drop_duplicates().reset_index(drop=True)
 
@@ -133,3 +145,137 @@ def supervision_deconnectee(seuil_jours: int) -> dict[str, pd.Timestamp]:
     d = pd.to_datetime(sup["Date"], errors="coerce")
     der = d.groupby(sup["Centrale"].map(g.cle)).max()
     return {k: v for k, v in der.items() if pd.notna(v) and (d.max() - v).days > seuil_jours}
+
+
+# ============================================================================= lot 2 : écritures
+REGISTRE_ETATS = "gmao_etats_saisis"
+
+
+def etats_saisis() -> pd.DataFrame:
+    """États de centrales saisis dans l'application (historique complet, jamais écrasé). Registre distinct des
+    journaux importés : réimporter un journal remplace toute son année et effacerait ces saisies."""
+    from .storage import session_ou_stockage
+    d = session_ou_stockage(REGISTRE_ETATS, lambda: pd.DataFrame(columns=gi.COLONNES_ETATS_SAISIS))
+    d = pd.DataFrame(columns=gi.COLONNES_ETATS_SAISIS) if d is None or len(d) == 0 else d.copy()
+    for c in gi.COLONNES_ETATS_SAISIS:
+        if c not in d.columns:
+            d[c] = None
+    for c in ("horodatage", "date_effet"):
+        d[c] = pd.to_datetime(d[c], errors="coerce")
+    return d[gi.COLONNES_ETATS_SAISIS]
+
+
+def _auteur() -> str:
+    try:
+        from .auth import utilisateur
+        u = utilisateur() or {}
+        return u.get("nom") or u.get("login") or "?"
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def enregistrer_etat(site: str, etat: str, cause: str | None, date_effet, commentaire: str | None,
+                     aujourd_hui: pd.Timestamp) -> bool:
+    """Ajoute un état saisi pour une centrale (contrôlé, tracé au journal de l'application)."""
+    err = gi.controler_etat(site, etat, date_effet, aujourd_hui, cause)
+    if err:
+        raise ValueError("\n".join(err))
+    from .storage import mettre_a_jour
+    ligne = {"horodatage": pd.Timestamp(gc.maintenant()), "cle_site": g.cle(site), "site": str(site).strip(), "etat": etat,
+             "cause": None if gi.est_vide(cause) else str(cause).strip(), "date_effet": pd.Timestamp(date_effet).normalize(),
+             "commentaire": None if gi.est_vide(commentaire) else str(commentaire).strip(), "auteur": _auteur()}
+    d = pd.concat([etats_saisis(), pd.DataFrame([ligne])], ignore_index=True)
+    return mettre_a_jour(REGISTRE_ETATS, d, f"état de la centrale {ligne['site']} : {etat} au {ligne['date_effet']:%d/%m/%Y}")
+
+
+def creer_fiche(v: dict, aujourd_hui: pd.Timestamp) -> str:
+    """Crée une fiche de défaut : c'est un bon d'intervention correctif du GMAO, enrichi du matériel et des
+    quantités. Renvoie son identifiant. `v` : champs de gi.controler_fiche + site_id, phase, region,
+    etat_arrivee, statut, equipe, chef, mesure_prise."""
+    err = gi.controler_fiche(v, aujourd_hui)
+    if err:
+        raise ValueError("\n".join(err))
+    constat = pd.Timestamp(v["date_constat"]).normalize()
+    ech = gi.echeance(constat, v["priorite"], delais(), v.get("jours_prevus"))
+    arret = v.get("etat_arrivee") == "À l'arrêt"
+    cloturee = bool(v.get("cloturee"))
+    ligne = {
+        "origine": "Suivi de la maintenance", "type": "Corrective", "priorite": gi.PRIORITE_VERS_BI[v["priorite"]],
+        "site_id": v.get("site_id"), "site": str(v["site"]).strip(), "phase": v.get("phase"), "region": v.get("region"),
+        "systeme": v["categorie"], "equipement": str(v["materiel"]).strip(), "description": str(v["description"]).strip(),
+        "statut": "Clôturé" if cloturee else (v.get("statut") or "À planifier"), "centrale_arret": arret,
+        "date_creation": constat, "date_prevue": ech, "date_arret": constat if arret else None,
+        "date_fin": pd.Timestamp(v["date_cloture"]).normalize() if cloturee else None,
+        "equipe": None if gi.est_vide(v.get("equipe")) else v["equipe"], "chef": None if gi.est_vide(v.get("chef")) else v["chef"],
+        "travaux": None if gi.est_vide(v.get("mesure_prise")) else str(v["mesure_prise"]).strip(),
+        "qte_affectee": float(v.get("qte_affectee") or 0), "qte_remplacee": float(v.get("qte_remplacee") or 0)}
+    return gc.ajouter("gmao_bi", [ligne], "BI", f"fiche de défaut — {ligne['site']} : {ligne['equipement']} ({v['priorite']})")[0]
+
+
+def maj_fiche_application(ident: str, statut: str, qte_remplacee: float, mesure_prise: str | None, date_cloture,
+                          aujourd_hui: pd.Timestamp) -> None:
+    """Met à jour une fiche saisie dans l'application (bon d'intervention)."""
+    bi = gc.table("gmao_bi")
+    l = bi[bi["id"].astype(str) == str(ident)]
+    if l.empty:
+        raise ValueError("Fiche introuvable.")
+    l = l.iloc[0]
+    ferme = statut in ("Terminé", "Clôturé")
+    err = _controler_cloture(l["date_creation"], ferme, date_cloture, qte_remplacee, l["qte_affectee"], aujourd_hui)
+    if statut not in gc.STATUTS_BI:
+        err.append("Statut inconnu.")
+    if err:
+        raise ValueError("\n".join(err))
+    val = {"statut": statut, "qte_remplacee": float(qte_remplacee or 0),
+           "date_fin": pd.Timestamp(date_cloture).normalize() if ferme else None}
+    if not gi.est_vide(mesure_prise):
+        val["travaux"] = str(mesure_prise).strip()
+    if ferme and bool(l["centrale_arret"]) and pd.isna(l["date_remise"]):
+        val["date_remise"] = val["date_fin"]
+    gc.modifier("gmao_bi", ident, val, f"fiche {ident} mise à jour : {statut}")
+
+
+def _controler_cloture(date_constat, ferme: bool, date_cloture, qte_remplacee, qte_affectee, aujourd_hui) -> list[str]:
+    err = []
+    if (qte_remplacee or 0) < 0:
+        err.append("La quantité remplacée ne peut pas être négative.")
+    elif pd.notna(qte_affectee) and qte_affectee and (qte_remplacee or 0) > qte_affectee:
+        err.append("La quantité remplacée dépasse la quantité affectée.")
+    if ferme:
+        if date_cloture is None or pd.isna(date_cloture):
+            err.append("Renseigne la date de clôture.")
+        else:
+            c = pd.Timestamp(date_cloture).normalize()
+            if c > pd.Timestamp(aujourd_hui).normalize():
+                err.append("La date de clôture ne peut pas être dans le futur.")
+            if pd.notna(date_constat) and c < pd.Timestamp(date_constat).normalize():
+                err.append("La date de clôture précède la date de constat.")
+    return err
+
+
+def maj_fiche_journal(ligne: int, site: str, cloturer: bool, qte_remplacee: float, mesure: str | None, date_cloture,
+                      aujourd_hui: pd.Timestamp) -> None:
+    """Met à jour une fiche issue d'un journal importé, directement dans le registre des défauts.
+    Garde-fou : la ligne visée doit toujours porter le même site (le registre a pu être réimporté entre-temps)."""
+    from .storage import mettre_a_jour
+    t = gmao_ui.charger_tables()
+    d = t.get("defauts")
+    if d is None or ligne not in d.index or g.cle(d.at[ligne, "site"]) != g.cle(site):
+        raise ValueError("La fiche a changé depuis l'affichage (journal réimporté ?) : recharge la page.")
+    err = _controler_cloture(pd.to_datetime(d.at[ligne, "date_incident"], errors="coerce"), cloturer, date_cloture,
+                             qte_remplacee, pd.to_numeric(d.at[ligne, "qte_affectee"], errors="coerce"), aujourd_hui)
+    if err:
+        raise ValueError("\n".join(err))
+    d = d.copy()
+    d.at[ligne, "qte_remplacee"] = float(qte_remplacee or 0)
+    if not gi.est_vide(mesure):
+        d.at[ligne, "mesure"] = str(mesure).strip()
+    if cloturer:
+        d.at[ligne, "resultat"] = "Clôturé"
+        d.at[ligne, "date_achevement"] = pd.Timestamp(date_cloture).normalize()
+    note = f"Mis à jour dans l'application le {pd.Timestamp(aujourd_hui):%d/%m/%Y} par {_auteur()}"
+    ancien = d.at[ligne, "commentaire"]
+    d.at[ligne, "commentaire"] = note if gi.est_vide(ancien) else f"{ancien} — {note}"
+    if mettre_a_jour(gmao_ui.TABLES["defauts"], d, f"fiche du {d.at[ligne, 'source']} — {site} : "
+                     + ("clôturée" if cloturer else "mise à jour")):
+        t["defauts"] = d

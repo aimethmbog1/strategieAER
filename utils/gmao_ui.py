@@ -67,6 +67,14 @@ def classes_sites(ref_sites: pd.DataFrame) -> pd.Series | None:
     if s.empty:
         return None
     m = dict(zip(s["cle_site"], s["classe"]))
+    # un état saisi dans « Suivi de la maintenance » remplace celui du journal (les deux pages restent d'accord)
+    from . import gmao_indicateurs as gi
+    from . import gmao_suivi as gs
+    es = gs.etats_saisis()
+    if len(es):
+        d = es.sort_values(["date_effet", "horodatage"]).drop_duplicates("cle_site", keep="last")
+        classes = {"En service H24": "Fonctionnelle (H24)", "Service partiel": "Fonctionnement partiel", "À l'arrêt": "À l'arrêt"}
+        m.update({k: classes[gi.GROUPE[e]] for k, e in zip(d["cle_site"], d["etat"]) if gi.GROUPE.get(e) in classes})
     return pd.Series(ref_sites["Nom du site"].map(g.cle).map(m).values, index=ref_sites["site_id"])
 
 

@@ -287,3 +287,94 @@ def test_fiches_depuis_journaux_et_bi():
     assert list(b["ref"]) == ["BI-1", "BI-4"] and list(b["ouvert"]) == [True, False]      # préventif et annulé écartés
     assert list(b["priorite"]) == ["URGENT", "CRITIQUE"] and b["jours_prevus"].iloc[0] == 3
     assert gi.fiches_depuis_bi(None, []).empty and gi.fiches_depuis_journaux(None).empty
+
+
+# ============================================================================= lot 2 : parc, backlog, fiche
+FICHE_OK = {"site": "A", "date_constat": J(3), "priorite": "URGENT", "categorie": "Champ PV", "materiel": "MDU",
+            "description": "MDU en défaut", "qte_affectee": 2, "qte_remplacee": 1, "cloturee": False, "date_cloture": None}
+
+
+def test_fiche_valide():
+    assert gi.controler_fiche(FICHE_OK, AUJ) == []
+    assert gi.controler_fiche(FICHE_OK | {"cloturee": True, "date_cloture": J(1)}, AUJ) == []
+
+
+@pytest.mark.parametrize("modif,mot", [
+    ({"materiel": "nan"}, "matériel"), ({"materiel": "  "}, "matériel"), ({"materiel": None}, "matériel"),
+    ({"site": None}, "site"), ({"description": ""}, "description"), ({"categorie": None}, "catégorie"),
+    ({"priorite": "Non renseignée"}, "priorité"), ({"date_constat": None}, "date de constat"),
+    ({"date_constat": AUJ + pd.Timedelta(days=1)}, "futur"), ({"qte_remplacee": 5}, "dépasse"),
+    ({"qte_affectee": -1, "qte_remplacee": 0}, "négatives"), ({"cloturee": True, "date_cloture": None}, "date de clôture"),
+    ({"cloturee": True, "date_cloture": J(10)}, "précède"), ({"cloturee": True, "date_cloture": AUJ + pd.Timedelta(days=2)}, "futur")])
+def test_fiche_refusee(modif, mot):
+    err = gi.controler_fiche(FICHE_OK | modif, AUJ)
+    assert len(err) == 1 and mot in err[0]
+
+
+def test_valeurs_vides():
+    assert all(gi.est_vide(x) for x in (None, float("nan"), "", "  ", "nan", "NaN", "None", "—", "Non renseigné"))
+    assert not gi.est_vide("Batterie") and not gi.est_vide(0)
+
+
+def test_controle_de_l_etat_saisi():
+    assert gi.controler_etat("A", gi.H24, AUJ, AUJ) == []
+    assert gi.controler_etat("A", gi.ARRET, J(2), AUJ, "Vandalisme") == []
+    assert "cause" in gi.controler_etat("A", gi.ARRET, AUJ, AUJ)[0]
+    assert "cause" in gi.controler_etat("A", gi.APRES_18H, AUJ, AUJ, " ")[0]
+    assert "futur" in gi.controler_etat("A", gi.H24, AUJ + pd.Timedelta(days=1), AUJ)[0]
+    assert len(gi.controler_etat(None, "Autre", None, AUJ)) == 3
+
+
+def test_etat_saisi_remplace_celui_du_journal():
+    saisies = pd.DataFrame([
+        {"horodatage": J(5), "cle_site": "a", "site": "A", "etat": gi.ARRET, "cause": "Vandalisme", "date_effet": J(6), "commentaire": None, "auteur": "x"},
+        {"horodatage": J(1), "cle_site": "a", "site": "A", "etat": gi.A_VIDE, "cause": "Réseau", "date_effet": J(2), "commentaire": None, "auteur": "x"},
+        {"horodatage": J(0), "cle_site": "a", "site": "A", "etat": gi.ARRET, "cause": "Ancien", "date_effet": J(30), "commentaire": None, "auteur": "x"},
+        {"horodatage": J(1), "cle_site": "p", "site": "P", "etat": gi.H24, "cause": None, "date_effet": J(1), "commentaire": None, "auteur": "x"}],
+        columns=gi.COLONNES_ETATS_SAISIS)
+    s = gi.appliquer_etats_saisis(PARC, saisies).set_index("cle_site")
+    assert s.at["a", "etat"] == gi.A_VIDE and s.at["a", "cause"] == "Réseau"        # date d'effet la plus récente
+    assert s.at["a", "etat_date"] == J(2) and s.at["a", "etat_source"] == "Saisie"
+    assert s.at["p", "etat"] == gi.H24                                             # un site de Phase 3 mis en service
+    assert s.at["c", "etat"] == gi.ARRET and s.at["c", "etat_source"] == "Journal" and pd.isna(s.at["c", "etat_date"])
+    vide = gi.appliquer_etats_saisis(PARC, None).set_index("cle_site")
+    assert vide.at["p", "etat_source"] == "Référentiel" and list(vide["etat"]) == list(PARC["etat"])
+
+
+def test_backlog_tri_et_filtres():
+    f = fiches(fiche(cle_site="a", priorite="MAJEUR", date_constat=J(900), description="poteau tombé"),
+               fiche(cle_site="c", priorite="CRITIQUE", date_constat=J(50), region="Est"),
+               fiche(cle_site="c", priorite="CRITIQUE", date_constat=J(200), region="Est"),
+               fiche(cle_site="a", priorite="URGENT", date_constat=J(1)),
+               fiche(cle_site="a", priorite="URGENT", date_constat=pd.NaT),
+               fiche(cle_site="a", ouvert=False, date_cloture=J(1)))
+    zones = {"a": "ZONE1", "c": "ZONE2"}
+    b = gi.backlog(f, zone_par_site=zones)
+    assert len(b) == 5 and list(b["priorite"]) == ["URGENT", "URGENT", "CRITIQUE", "CRITIQUE", "MAJEUR"]
+    assert pd.isna(b["date_constat"].iloc[1]) and b["age_j"].iloc[2] == 200        # la plus ancienne d'abord
+    assert len(gi.backlog(f, delai="Hors délai", zone_par_site=zones)) == 2
+    assert len(gi.backlog(f, delai="Dans le délai", zone_par_site=zones)) == 1      # URGENT d'hier : échéance demain
+    assert len(gi.backlog(f, delai="Sans échéance", zone_par_site=zones)) == 2      # MAJEUR sans délai ; URGENT sans date
+    assert len(gi.backlog(f, zones=["ZONE2"], zone_par_site=zones)) == 2 and len(gi.backlog(f, regions=["Est"])) == 2
+    assert len(gi.backlog(f, recherche="POTEAU")) == 1 and gi.backlog(f, priorites=["MINEUR"]).empty
+
+
+def test_synthese_par_region():
+    f = fiches(fiche(cle_site="c"), fiche(cle_site="c"), fiche(cle_site="a"), fiche(cle_site="d", ouvert=False, date_cloture=J(1)))
+    t = gi.synthese_par_region(PARC, f).set_index("Région")
+    assert (t.at["Nord", "Sites"], t.at["Nord", "Installée (kWc)"], t.at["Nord", "En service (kWc)"]) == (2, 150, 150)
+    assert t.at["Nord", "% exploité"] == 100 and t.at["Nord", "Défauts ouverts"] == 1
+    assert t.at["Est", "À l'arrêt"] == 1 and t.at["Est", "% exploité"] == pytest.approx(100 * 120 / 150) and t.at["Est", "Défauts ouverts"] == 2
+    assert pd.isna(t.at["Sud", "% exploité"])                                      # rien n'est mis en service
+
+
+def test_table_des_sites():
+    f = fiches(fiche(cle_site="c", priorite="URGENT", date_constat=J(40)), fiche(cle_site="c", date_constat=J(10)),
+               fiche(cle_site="a", ouvert=False, date_constat=J(70), date_cloture=J(60)))
+    arrets = pd.DataFrame({"cle_site": ["c", "c", "c"], "date": [J(10), J(40), J(700)]})
+    visites = pd.DataFrame({"cle_site": ["c", "c"], "date": [J(40), J(10)]})
+    t = gi.table_sites(PARC, f, arrets, visites, AUJ.year).set_index("cle_site")
+    assert (t.at["c", "Ouverts"], t.at["c", "Hors délai"], t.at["c", f"Arrêts {AUJ.year}"]) == (2, 1, 2)
+    assert t.at["c", "Dernière visite"] == J(10) and t.at["c", "Dernier défaut"] == J(10)
+    assert t.at["a", "Ouverts"] == 0 and t.at["a", "Dernier défaut"] == J(70) and pd.isna(t.at["p", "Dernière visite"])
+    assert len(t) == len(PARC)

@@ -46,7 +46,8 @@ COLS = {
     "gmao_bi": ["id", "di_id", "origine", "plan_id", "type", "priorite", "site_id", "site", "phase", "region", "systeme",
                 "equipement", "description", "statut", "centrale_arret", "date_creation", "date_prevue", "date_debut",
                 "date_fin", "date_arret", "date_remise", "duree_interv_h", "temps_arret_h", "equipe", "chef",
-                "intervenants", "travaux", "cause", "cout_mo", "cout_presta", "prestataire"],
+                "intervenants", "travaux", "cause", "cout_mo", "cout_presta", "prestataire",
+                "qte_affectee", "qte_remplacee"],   # fiche de défaut : quantités de matériel affectées / remplacées
     "gmao_plans": ["id", "libelle", "type", "systeme", "phases", "regions", "periodicite_j", "duree_h", "equipe",
                    "prochaine_echeance", "actif", "consignes"],
     "gmao_articles": ["code", "designation", "categorie", "systeme", "unite", "magasin", "stock_mini", "prix_unitaire"],
@@ -61,7 +62,7 @@ COLS = {
 DATES = {"date", "date_creation", "date_prevue", "date_debut", "date_fin", "date_arret", "date_remise",
          "prochaine_echeance", "date_reception", "fin_contrat", "date_mes"}
 NUMS = {"duree_interv_h", "temps_arret_h", "cout_mo", "cout_presta", "periodicite_j", "duree_h", "stock_mini",
-        "prix_unitaire", "quantite", "montant", "montant_prevu", "annee"}
+        "prix_unitaire", "quantite", "montant", "montant_prevu", "annee", "qte_affectee", "qte_remplacee"}
 
 
 def maintenant() -> datetime:

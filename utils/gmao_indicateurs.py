@@ -91,7 +91,7 @@ def est_lineaire(materiel) -> bool:
 # ----------------------------------------------------------------------------- fiches (journaux + application)
 COLONNES_FICHES = ["source", "ref", "cle_site", "site", "phase", "region", "date_constat", "date_cloture", "ouvert",
                    "priorite", "categorie", "materiel", "description", "qte_affectee", "qte_remplacee", "lineaire",
-                   "site_arret_au_constat", "jours_prevus"]
+                   "site_arret_au_constat", "jours_prevus", "ligne"]
 
 
 def fiches_depuis_journaux(d: pd.DataFrame | None) -> pd.DataFrame:
@@ -110,7 +110,8 @@ def fiches_depuis_journaux(d: pd.DataFrame | None) -> pd.DataFrame:
         "qte_remplacee": pd.to_numeric(d["qte_remplacee"], errors="coerce").fillna(0),
         "lineaire": d["lineaire"].astype(bool) if "lineaire" in d else False,
         "site_arret_au_constat": d["etat_arrivee"].astype(str).str.lower().str.contains("arr"),
-        "jours_prevus": pd.to_numeric(d["jours_prevus"], errors="coerce")})[COLONNES_FICHES].reset_index(drop=True)
+        "jours_prevus": pd.to_numeric(d["jours_prevus"], errors="coerce"),
+        "ligne": d.index})[COLONNES_FICHES].reset_index(drop=True)
 
 
 def fiches_depuis_bi(bi: pd.DataFrame | None, statuts_ouverts: list[str]) -> pd.DataFrame:
@@ -130,7 +131,8 @@ def fiches_depuis_bi(bi: pd.DataFrame | None, statuts_ouverts: list[str]) -> pd.
         "priorite": b["priorite"].map(priorite_normalisee), "categorie": b["systeme"].fillna("Non renseignée"),
         "materiel": b["equipement"].fillna("Non renseigné"), "description": b["description"],
         "qte_affectee": q("qte_affectee"), "qte_remplacee": q("qte_remplacee"), "lineaire": False,
-        "site_arret_au_constat": b["centrale_arret"].astype(bool), "jours_prevus": prevus})[COLONNES_FICHES].reset_index(drop=True)
+        "site_arret_au_constat": b["centrale_arret"].astype(bool), "jours_prevus": prevus,
+        "ligne": None})[COLONNES_FICHES].reset_index(drop=True)
 
 
 def completer_fiches(f: pd.DataFrame, aujourd_hui: pd.Timestamp, delais: dict | None = None) -> pd.DataFrame:
@@ -451,6 +453,149 @@ def materiel_affecte_remplace(f: pd.DataFrame) -> pd.DataFrame:
 def etat_par_region(sites: pd.DataFrame) -> pd.DataFrame:
     t = pd.crosstab(sites["region"].fillna("Non renseignée"), sites["etat"].map(GROUPE))
     return t.reindex(columns=[c for c in GROUPES if c in t.columns]).reset_index(names="Région")
+
+
+# ============================================================================= lot 2 : parc, backlog, fiche
+PRIORITE_VERS_BI = {"URGENT": "Urgente", "CRITIQUE": "Critique", "MAJEUR": "Majeure", "MINEUR": "Mineure"}
+ETATS_SAISIE = [H24, A_VIDE, AVANT_18H, APRES_18H, ARRET, NON_MES]
+ETATS_ARRIVEE = ["En marche", "Service partiel", "À l'arrêt"]
+FILTRES_DELAI = ["Tous", "Hors délai", "Dans le délai", "Sans échéance"]
+# Causes d'arrêt relevées sur le prototype (liste de départ, modifiable dans les paramètres)
+CAUSES_ARRET_DEFAUT = ["Batteries défectueuses", "Panne équipement", "Défaut réseau", "Réseau de distribution non disponible",
+                       "Vandalisme", "Météo", "Brûlé", "Autre", "Non précisée"]
+COLONNES_ETATS_SAISIS = ["horodatage", "cle_site", "site", "etat", "cause", "date_effet", "commentaire", "auteur"]
+_VIDES = {"", "nan", "none", "null", "non renseigné", "non renseigne", "-", "—"}
+
+
+def est_vide(x) -> bool:
+    """Vrai pour une valeur absente ou un texte qui ne dit rien (« nan », « — », espaces…)."""
+    return x is None or (not isinstance(x, str) and pd.isna(x)) or (isinstance(x, str) and x.strip().lower() in _VIDES)
+
+
+def controler_fiche(v: dict, aujourd_hui: pd.Timestamp) -> list[str]:
+    """Anomalies bloquantes d'une fiche de défaut avant enregistrement (liste vide = fiche valide).
+    Champs attendus : site, date_constat, priorite, categorie, materiel, description, qte_affectee,
+    qte_remplacee, cloturee, date_cloture."""
+    err = []
+    auj = pd.Timestamp(aujourd_hui).normalize()
+    for champ, lib in (("site", "le site"), ("categorie", "la catégorie"), ("materiel", "le matériel affecté"),
+                       ("description", "la description du problème")):
+        if est_vide(v.get(champ)):
+            err.append(f"Renseigne {lib}.")
+    if v.get("priorite") not in PRIORITE_VERS_BI:
+        err.append("Choisis une priorité : URGENT, CRITIQUE, MAJEUR ou MINEUR.")
+    d = v.get("date_constat")
+    if d is None or pd.isna(d):
+        err.append("Renseigne la date de constat.")
+    elif pd.Timestamp(d).normalize() > auj:
+        err.append("La date de constat ne peut pas être dans le futur.")
+    qa, qr = v.get("qte_affectee") or 0, v.get("qte_remplacee") or 0
+    if qa < 0 or qr < 0:
+        err.append("Les quantités ne peuvent pas être négatives.")
+    elif qr > qa:
+        err.append("La quantité remplacée dépasse la quantité affectée.")
+    if v.get("cloturee"):
+        c = v.get("date_cloture")
+        if c is None or pd.isna(c):
+            err.append("Une fiche clôturée doit avoir une date de clôture.")
+        elif d is not None and not pd.isna(d) and pd.Timestamp(c).normalize() < pd.Timestamp(d).normalize():
+            err.append("La date de clôture précède la date de constat.")
+        elif pd.Timestamp(c).normalize() > auj:
+            err.append("La date de clôture ne peut pas être dans le futur.")
+    return err
+
+
+def controler_etat(site, etat, date_effet, aujourd_hui: pd.Timestamp, cause=None) -> list[str]:
+    err = []
+    if est_vide(site):
+        err.append("Choisis une centrale.")
+    if etat not in ETATS_SAISIE:
+        err.append("Choisis un état dans la liste.")
+    if date_effet is None or pd.isna(date_effet):
+        err.append("Renseigne la date à laquelle l'état a été constaté.")
+    elif pd.Timestamp(date_effet).normalize() > pd.Timestamp(aujourd_hui).normalize():
+        err.append("La date de constat de l'état ne peut pas être dans le futur.")
+    if GROUPE.get(etat) in ("À l'arrêt", "Service partiel") and est_vide(cause):
+        err.append("Indique la cause (ou « Non précisée ») pour un site à l'arrêt ou en service partiel.")
+    return err
+
+
+def appliquer_etats_saisis(sites: pd.DataFrame, saisies: pd.DataFrame | None) -> pd.DataFrame:
+    """Remplace l'état issu des journaux par le dernier état SAISI dans l'application, quand il existe (date
+    d'effet la plus récente, puis saisie la plus récente). Ajoute « etat_date » et « etat_source »."""
+    s = sites.copy()
+    s["etat_date"], s["etat_source"] = pd.NaT, "Journal"
+    s.loc[s["etat"] == NON_MES, "etat_source"] = "Référentiel"
+    if saisies is None or saisies.empty:
+        return s
+    d = saisies.assign(date_effet=pd.to_datetime(saisies["date_effet"]), horodatage=pd.to_datetime(saisies["horodatage"]))
+    d = d.sort_values(["date_effet", "horodatage"]).drop_duplicates("cle_site", keep="last").set_index("cle_site")
+    m = s["cle_site"].isin(d.index)
+    for col, src in (("etat", "etat"), ("cause", "cause"), ("etat_date", "date_effet")):
+        s.loc[m, col] = s.loc[m, "cle_site"].map(d[src]).values
+    s.loc[m, "etat_source"] = "Saisie"
+    s["etat_date"] = pd.to_datetime(s["etat_date"])
+    return s
+
+
+def backlog(f: pd.DataFrame, recherche: str = "", regions=None, zones=None, priorites=None, categories=None,
+            delai: str = "Tous", zone_par_site: dict | None = None) -> pd.DataFrame:
+    """Fiches ouvertes, filtrées, triées par priorité (URGENT d'abord) puis de la plus en retard à la plus récente."""
+    b = f[f["ouvert"]].copy()
+    b["zone"] = b["cle_site"].map(zone_par_site or {})
+    for col, val in (("region", regions), ("zone", zones), ("priorite", priorites), ("categorie", categories)):
+        if val:
+            b = b[b[col].isin(val)]
+    if delai == "Hors délai":
+        b = b[b["hors_delai"]]
+    elif delai == "Dans le délai":
+        b = b[~b["hors_delai"] & b["echeance"].notna()]
+    elif delai == "Sans échéance":
+        b = b[b["echeance"].isna()]
+    q = (recherche or "").strip()
+    if q:
+        texte = b[["site", "description", "materiel", "ref"]].apply(lambda col: col.map(lambda x: "" if est_vide(x) else str(x)))
+        texte = texte["site"] + " " + texte["description"] + " " + texte["materiel"] + " " + texte["ref"]
+        b = b[texte.str.contains(q, case=False, regex=False)]
+    b["_p"] = b["priorite"].map({p: i for i, p in enumerate(PRIORITES)})
+    return b.sort_values(["_p", "date_constat"], na_position="last").drop(columns="_p").reset_index(drop=True)
+
+
+def synthese_par_region(sites: pd.DataFrame, f: pd.DataFrame) -> pd.DataFrame:
+    """Par région : sites, puissance installée et en service, % exploité (sur la puissance mise en service),
+    sites à l'arrêt, défauts ouverts."""
+    gr = sites["etat"].map(GROUPE)
+    ouv = f[f["ouvert"]].groupby("cle_site").size()
+    x = sites.assign(_serv=sites["kwc"].where(gr.isin(["En service H24", "Service partiel"]), 0.0),
+                     _mes=sites["kwc"].where(gr != NON_MES, 0.0), _arr=(gr == "À l'arrêt").astype(int),
+                     _ouv=sites["cle_site"].map(ouv).fillna(0), region=sites["region"].fillna("Non renseignée"))
+    t = x.groupby("region").agg(Sites=("cle_site", "size"), **{"Installée (kWc)": ("kwc", "sum"), "En service (kWc)": ("_serv", "sum")},
+                                _mes=("_mes", "sum"), **{"À l'arrêt": ("_arr", "sum"), "Défauts ouverts": ("_ouv", "sum")})
+    t["% exploité"] = (100 * t["En service (kWc)"] / t["_mes"]).where(t["_mes"] > 0)
+    t["Défauts ouverts"] = t["Défauts ouverts"].astype(int)
+    return t.drop(columns="_mes").reset_index().rename(columns={"region": "Région"})[
+        ["Région", "Sites", "Installée (kWc)", "En service (kWc)", "% exploité", "À l'arrêt", "Défauts ouverts"]]
+
+
+def table_sites(sites: pd.DataFrame, f: pd.DataFrame, arrets: pd.DataFrame, visites: pd.DataFrame, annee: int) -> pd.DataFrame:
+    """Une ligne par centrale : état, cause, défauts ouverts et hors délai, arrêts de l'année, dernière visite,
+    dernier défaut."""
+    ouv = f[f["ouvert"]]
+    par = lambda serie: sites["cle_site"].map(serie)  # noqa: E731
+    a = arrets[arrets["date"].dt.year == annee].groupby("cle_site").size() if arrets is not None and len(arrets) else pd.Series(dtype=int)
+    v = visites.groupby("cle_site")["date"].max() if visites is not None and len(visites) else pd.Series(dtype="datetime64[ns]")
+    out = pd.DataFrame({
+        "cle_site": sites["cle_site"], "Site": sites["site"], "Région": sites["region"], "Zone": sites["zone"],
+        "kWc": sites["kwc"], "Phase": sites["phase"], "Responsable": sites["responsable"], "État": sites["etat"],
+        "Cause / observation": sites["cause"],
+        "Ouverts": par(ouv.groupby("cle_site").size()).fillna(0).astype(int),
+        "Hors délai": par(ouv[ouv["hors_delai"]].groupby("cle_site").size()).fillna(0).astype(int),
+        f"Arrêts {annee}": par(a).fillna(0).astype(int),
+        "Dernière visite": pd.to_datetime(par(v)), "Dernier défaut": pd.to_datetime(par(f.groupby("cle_site")["date_constat"].max()))})
+    for c in ("etat_date", "etat_source"):
+        if c in sites:
+            out[{"etat_date": "État constaté le", "etat_source": "Source de l'état"}[c]] = sites[c].values
+    return out.reset_index(drop=True)
 
 
 def maintenant_douala() -> pd.Timestamp:

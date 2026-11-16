@@ -8,6 +8,7 @@ import streamlit as st
 from utils import gmao_core as gc
 from utils import gmao_indicateurs as gi
 from utils import gmao_suivi as gs
+from utils import gmao_suivi_ui as gsu
 from utils import maintenance as mt
 from utils.auth import peut_modifier
 from utils.loader import get_data
@@ -64,7 +65,10 @@ if f0.empty and (sites["etat"] == gi.NON_RENSEIGNE).all():
     render_sidebar_footer("")
     st.stop()
 
-t_vue, t_par = st.tabs(["📊 Vue d'ensemble", "⚙️ Paramètres"])
+arrets = gs.arrets_connus(f0, bi)
+visites = gs.visites_connues(f0, bi)
+t_vue, t_parc, t_back, t_fiche, t_par = st.tabs(["📊 Vue d'ensemble", "🏭 Parc de sites", "📋 Backlog", "➕ Nouvelle fiche",
+                                                "⚙️ Paramètres"])
 
 # ============================================================================= VUE D'ENSEMBLE
 with t_vue:
@@ -128,8 +132,6 @@ with t_vue:
             "aucune donnée de l'application. Ce bloc sera alimenté par le référentiel des sites (lot « Parc de sites »).")
 
     # ---- priorités d'intervention
-    arrets = gs.arrets_connus(f0, bi)
-    visites = gs.visites_connues(f0, bi)
     seuil_sup = int(gs.reglage("supervision_seuil_j", 2))
     deconn = gs.supervision_deconnectee(seuil_sup)
     sc = gi.scores_sites(s, f0, arrets, visites, auj, poids, supervision={k: "déconnectée" for k in deconn})
@@ -310,8 +312,16 @@ with t_vue:
             st.caption("Ces noms ne se retrouvent pas tels quels dans le référentiel des sites (orthographe différente "
                        "ou site manquant). Elles sont comptées ici d'après les journaux, mais restent à rapprocher.")
             st.write(", ".join(absents_ref))
-    st.caption("Les onglets Parc de sites, Backlog et nouvelle fiche, Arrêts et disponibilité, Visites arrivent aux "
-               "lots suivants ; Stocks et Équipes étendront les modules du GMAO.")
+    st.caption("Les onglets Arrêts et disponibilité, puis Visites, arrivent aux lots suivants ; Stocks et Équipes "
+               "étendront les modules du GMAO.")
+
+with t_parc:
+    gsu.onglet_parc(sites, f0, arrets, visites, ref, auj)
+with t_back:
+    gsu.onglet_backlog(sites, f0, auj)
+with t_fiche:
+    gsu.onglet_fiche(sites, ref, auj, sorted({str(x) for x in sites["responsable"].dropna()}) + ["Prestataire / autre"],
+                     list(f0["materiel"].unique()))
 
 # ============================================================================= PARAMÈTRES
 with t_par:
@@ -352,6 +362,8 @@ with t_par:
         n_int = c[2].number_input("Indice d'interruption : constat d'arrêt de moins de (jours)", 1, 720,
                                   int(gs.reglage("interruption_jours", 90)), key="sm_int", disabled=not edition)
         n_sup = c[3].number_input("Supervision déconnectée au-delà de (jours)", 1, 90, seuil_sup, key="sm_sup", disabled=not edition)
+        causes_txt = st.text_area("Causes d'arrêt proposées à la saisie (une par ligne)", height=150, key="sm_causes", disabled=not edition,
+                                  value="\n".join(gs.reglage("causes_arret", gi.CAUSES_ARRET_DEFAUT)))
         if st.form_submit_button("💾 Enregistrer les paramètres", type="primary", disabled=not edition):
             gs.enregistrer_reglages({
                 "delais": {p: (int(v) if v else None) for p, v in nd.items()},
@@ -361,7 +373,8 @@ with t_par:
                           "supervision": {"déconnectée": int(p_dec), "défaillante": int(p_def)},
                           "seuil_tres_expose": int(seuil_te)},
                 "seuil_recidive": int(n_rec), "puissance_cible": float(n_cible) or None,
-                "interruption_jours": int(n_int), "supervision_seuil_j": int(n_sup)})
+                "interruption_jours": int(n_int), "supervision_seuil_j": int(n_sup),
+                "causes_arret": [x.strip() for x in causes_txt.split("\n") if x.strip()] or gi.CAUSES_ARRET_DEFAUT})
             st.session_state["_sm_ok"] = "Paramètres enregistrés."
             st.rerun()
     st.caption("Valeurs de départ : URGENT 2 jours et CRITIQUE 7 jours (relevés sur le prototype) ; MAJEUR et MINEUR "
