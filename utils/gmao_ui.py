@@ -45,8 +45,28 @@ def charger_tables() -> dict[str, pd.DataFrame]:
                 t[k] = pd.read_excel(xls, sheet_name=k)
                 mettre_a_jour(r, t[k], f"journaux de maintenance 2025-2026 intégrés ({len(t[k])} lignes)")
     t = {k: (v if v is not None else pd.DataFrame()) for k, v in t.items()}
+    t["affectations"] = _corriger_responsables(t["affectations"])
     st.session_state["_gmao_tables"] = t
     return t
+
+
+# Responsables de zone remplacés : appliqué aussi à une base déjà alimentée (production), une seule fois,
+# car la base n'est plus relue depuis le classeur intégré après le premier versement.
+RESPONSABLES_REMPLACES = {"MBUIGA Lambert": "NGUONAM Clement Tangjua"}
+
+
+def _corriger_responsables(aff: pd.DataFrame) -> pd.DataFrame:
+    if aff.empty or "responsable" not in aff.columns:
+        return aff
+    a_corriger = aff["responsable"].isin(RESPONSABLES_REMPLACES)
+    if not a_corriger.any():
+        return aff
+    aff = aff.copy()
+    aff.loc[a_corriger, "responsable"] = aff.loc[a_corriger, "responsable"].map(RESPONSABLES_REMPLACES)
+    mettre_a_jour(TABLES["affectations"], aff,
+                  f"responsable de zone remplacé ({int(a_corriger.sum())} affectation(s)) : "
+                  + ", ".join(f"{a} → {b}" for a, b in RESPONSABLES_REMPLACES.items()))
+    return aff
 
 
 def enregistrer_import(nouveaux: dict[str, pd.DataFrame]) -> list[str]:
