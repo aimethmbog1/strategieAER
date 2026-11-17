@@ -137,6 +137,15 @@ def calculer_alertes(data, seuils: dict) -> pd.DataFrame:
             al.append(_a("Moyenne", "Budget", a, "Aucun engagement au second semestre.",
                          "Lancer les procédures de passation ou justifier le report."))
 
+    # --- Maintenance des centrales (règles proposées : seulement si l'utilisateur les a activées)
+    if seuils.get("maintenance_actives"):
+        try:
+            al.extend(alertes_maintenance_centrales(data, seuils))
+        except Exception as e:  # noqa: BLE001 — une règle en échec ne doit pas masquer les autres alertes
+            al.append(_a("Information", "Maintenance des centrales", "Calcul des alertes",
+                         f"Les alertes de maintenance n'ont pas pu être calculées ({type(e).__name__}).",
+                         "Ouvrir « Suivi de la maintenance » pour vérifier les données."))
+
     # --- Fraîcheur des données sources
     gen = getattr(data, "generated_on", "") or ""
     import re
@@ -179,3 +188,18 @@ def envoyer_recapitulatif(alertes: pd.DataFrame, destinataires: list[str]) -> st
             s.login(cfg["user"], cfg["password"])
         s.send_message(msg)
     return f"Récapitulatif envoyé à {len(destinataires)} destinataire(s)."
+
+
+def alertes_maintenance_centrales(data, seuils: dict) -> list[dict]:
+    """Fiches urgentes ou critiques hors délai, arrêts en cours prolongés, articles en rupture de stock."""
+    from . import gmao_core as gc
+    from . import gmao_indicateurs as gi
+    from . import gmao_suivi as gs
+    from . import maintenance as mt
+    auj = gi.maintenant_douala()
+    bi = gc.table("gmao_bi")
+    f = gs.fiches(auj, bi)
+    enc = gi.arrets_en_cours(gs.arrets_declares(), pd.Timestamp(gc.maintenant()))
+    sites, _ = gs.sites_suivis(mt.referentiel_sites(data.sites), bi)
+    etat = gi.etat_du_stock(gc.table("gmao_articles"), gs.stocks(), f)
+    return gi.alertes_maintenance(f, enc, etat, float(seuils.get("arret_prolonge_j", 7)))

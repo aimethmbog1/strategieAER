@@ -602,3 +602,109 @@ def test_chefs_sans_equipe():
     o = gi.chefs_sans_equipe(v, eq, {"c": "ZONE3", "d": "ZONE3", "e": "ZONE1"})
     assert list(o["Chef"]) == ["Ateba"] and o["Visites"].iloc[0] == 3 and o["Zone principale"].iloc[0] == "ZONE3" and o["Dernière"].iloc[0] == J(5)
     assert gi.chefs_sans_equipe(v.iloc[0:1], eq).empty and gi.chefs_sans_equipe(v.iloc[0:0], eq).empty
+
+
+# ============================================================================= lot 5 : stocks et alertes
+def mouvements(*lignes):
+    """(code, type, quantité, date, magasin)"""
+    return pd.DataFrame([{"code": c, "type": t, "quantite": q, "date": d, "magasin": m} for c, t, q, d, m in lignes])
+
+
+def test_stock_avec_inventaire():
+    mv = mouvements(("B-001", "Entrée", 10, J(30), "Central"), ("B-001", "Sortie", 3, J(25), "Central"),
+                    ("B-001", "Inventaire", 5, J(20), "Central"),           # fixe 5 (et non 7) à cette date
+                    ("B-001", "Entrée", 4, J(10), "Central"), ("B-001", "Sortie", 2, J(5), "Central"),
+                    ("B-001", "Entrée", 6, J(2), "Antenne Nord"), ("A-024", "Ajustement", -1, J(1), "Central"),
+                    ("A-024", "Entrée", 3, J(3), "Central"))
+    s = gi.stocks_par_magasin(mv).set_index(["code", "magasin"])
+    assert s.at[("B-001", "Central"), "stock"] == 7 and s.at[("B-001", "Central"), "dernier_inventaire"] == J(20)
+    assert s.at[("B-001", "Antenne Nord"), "stock"] == 6 and pd.isna(s.at[("B-001", "Antenne Nord"), "dernier_inventaire"])
+    assert s.at[("A-024", "Central"), "stock"] == 2                          # ancien type « Ajustement » : quantité signée
+    # inventaire et entrée à la même date : l'ordre d'enregistrement départage
+    meme_jour = mouvements(("X", "Entrée", 4, J(1), "M"), ("X", "Inventaire", 10, J(1), "M"), ("X", "Entrée", 1, J(1), "M"))
+    assert gi.stocks_par_magasin(meme_jour)["stock"].iloc[0] == 11
+    assert gi.stocks_par_magasin(None).empty
+
+
+def test_besoin_sur_fiches_ouvertes_fiche_par_fiche():
+    f = fiches(fiche(materiel="Batterie", qte_affectee=10, qte_remplacee=4),            # reste 6
+               fiche(materiel="BATTERIE ", qte_affectee=2, qte_remplacee=5),           # excédent : n'efface pas l'autre fiche
+               fiche(materiel="Batterie", qte_affectee=8, ouvert=False, date_cloture=J(1)),   # clôturée : exclue
+               fiche(materiel="Câble PD", qte_affectee=300), fiche(materiel="nan", qte_affectee=4))
+    b = gi.besoins_par_materiel(f)
+    assert list(b.index) == ["batterie"] and b.at["batterie", "besoin"] == 6 and b.at["batterie", "fiches"] == 1
+
+
+@pytest.mark.parametrize("besoin,seuil,stock,att", [(23, 0, 0, 23), (5, 2, 3, 4), (0, 2, 5, 0), (3, 0, 10, 0), (None, None, None, 0)])
+def test_a_commander(besoin, seuil, stock, att):
+    assert gi.a_commander(besoin, seuil, stock) == att
+
+
+@pytest.mark.parametrize("stock,seuil,besoin,att", [(0, 0, 23, "Rupture"), (0, 2, 0, "Rupture"), (0, 0, 0, "OK"),
+                                                    (3, 2, 5, "Sous le seuil"), (1, 2, 0, "Sous le seuil"), (10, 2, 5, "OK")])
+def test_statut_du_stock(stock, seuil, besoin, att):
+    assert gi.statut_stock(stock, seuil, besoin) == att
+
+
+def test_etat_du_stock_et_indicateurs():
+    art = pd.DataFrame({"code": ["A-024", "B-001", "C-010", "D-001"], "designation": ["Climatiseur (évaporateur)", "Batterie", "Câble PD", "MDU"],
+                        "categorie": ["Refroidissement", "Système batterie", "Câblage", "Conversion"], "unite": ["u"] * 4,
+                        "stock_mini": [0, 2, 0, 1], "prix_unitaire": [0, 150000, 0, None]})
+    mv = mouvements(("B-001", "Inventaire", 3, J(5), "Central"), ("B-001", "Entrée", 1, J(4), "Nord"), ("D-001", "Inventaire", 4, J(3), "Central"))
+    f = fiches(fiche(materiel="Climatiseur (évaporateur)", qte_affectee=23), fiche(materiel="Batterie", qte_affectee=5, qte_remplacee=1),
+               fiche(materiel="Câble PD", qte_affectee=80))
+    e = gi.etat_du_stock(art, gi.stocks_par_magasin(mv), f).set_index("code")
+    assert (e.at["A-024", "besoin"], e.at["A-024", "a_commander"], e.at["A-024", "statut"]) == (23, 23, "Rupture")
+    assert (e.at["B-001", "stock_total"], e.at["B-001", "besoin"], e.at["B-001", "a_commander"], e.at["B-001", "statut"]) == (4, 4, 2, "Sous le seuil")
+    assert e.at["B-001", "valeur"] == 600000 and pd.isna(e.at["A-024", "prix_unitaire"])
+    assert e.at["C-010", "besoin"] == 0 and e.at["C-010", "lineaire"] and e.at["C-010", "statut"] == "OK"   # câble exclu
+    assert e.at["D-001", "statut"] == "OK" and e.at["D-001", "a_commander"] == 0
+    nord = gi.etat_du_stock(art, gi.stocks_par_magasin(mv), f, "Nord").set_index("code")
+    assert nord.at["B-001", "stock"] == 1 and nord.at["B-001", "stock_total"] == 4 and nord.at["B-001", "a_commander"] == 2
+    k = gi.indicateurs_stock(gi.etat_du_stock(art, gi.stocks_par_magasin(mv), f), mv.assign(date=[J(5), J(4), J(40)]), AUJ, 2)
+    assert (k["articles"], k["magasins"], k["rupture"], k["sous_seuil"], k["a_commander"]) == (4, 2, 1, 1, 2)
+    assert k["valeur"] == 600000 and k["articles_sans_prix"] == 1 and k["mouvements_30j"] == 2 and k["sorties_30j"] == 0
+    assert gi.etat_du_stock(art.iloc[0:0], gi.stocks_par_magasin(None), f).empty
+
+
+MV_OK = {"code": "B-001", "type": "Entrée", "quantite": 5, "date": J(1), "magasin": "Central", "saisi_par": "Agent", "site": None}
+
+
+def test_controle_d_un_mouvement():
+    assert gi.controler_mouvement(MV_OK, AUJ) == []
+    assert gi.controler_mouvement(MV_OK | {"type": "Inventaire", "quantite": 0}, AUJ) == []        # inventaire à zéro autorisé
+    assert gi.controler_mouvement(MV_OK | {"type": "Sortie", "quantite": 2, "site": "Gouna"}, AUJ, stock_magasin=5) == []
+    assert "Sortie impossible" in gi.controler_mouvement(MV_OK | {"type": "Sortie", "quantite": 6, "site": "Gouna"}, AUJ, 5)[0]
+    assert "site destinataire" in gi.controler_mouvement(MV_OK | {"type": "Sortie", "quantite": 1}, AUJ, 5)[0]
+    assert "supérieure à zéro" in gi.controler_mouvement(MV_OK | {"quantite": 0}, AUJ)[0]
+    assert "futur" in gi.controler_mouvement(MV_OK | {"date": AUJ + pd.Timedelta(days=1)}, AUJ)[0]
+    assert "saisit" in gi.controler_mouvement(MV_OK | {"saisi_par": " "}, AUJ)[0]
+    assert len(gi.controler_mouvement({"type": "Transfert"}, AUJ)) == 6
+
+
+def test_controle_d_un_article_et_sorties_par_mois():
+    assert gi.controler_article({"code": "b-030", "designation": "Fusible"}, {"B-001"}) == []
+    assert "existe déjà" in gi.controler_article({"code": " b-001 ", "designation": "x"}, {"B-001"})[0]
+    assert len(gi.controler_article({"code": "", "designation": "nan", "stock_mini": -1, "prix_unitaire": -5}, set())) == 4
+    mv = mouvements(("B-001", "Sortie", 2, pd.Timestamp("2026-03-02"), "M"), ("B-001", "Sortie", 3, pd.Timestamp("2026-03-20"), "M"),
+                    ("A", "Entrée", 9, pd.Timestamp("2026-03-20"), "M"), ("A", "Sortie", 1, pd.Timestamp("2026-05-01"), "M"))
+    s = gi.sorties_par_mois(mv)
+    assert list(s["Quantité sortie"]) == [5, 1] and list(s["Sorties"]) == [2, 1] and gi.sorties_par_mois(None).empty
+
+
+def test_alertes_proposees():
+    f = fiches(fiche(priorite="URGENT", date_constat=J(10), materiel="MDU"), fiche(priorite="CRITIQUE", date_constat=J(30)),
+               fiche(priorite="CRITIQUE", date_constat=J(3)), fiche(priorite="MAJEUR", date_constat=J(900)),
+               fiche(priorite="URGENT", date_constat=J(40), ouvert=False, date_cloture=J(1)))
+    enc = gi.arrets_en_cours(episodes(("a", J(10), None, False, "Vandalisme", None), ("b", J(2), None, False, None, None),
+                                      ("c", pd.NaT, None, True, None, None)), AUJ)
+    etat = pd.DataFrame({"code": ["A-024", "B-001"], "designation": ["Climatiseur", "Batterie"], "statut": ["Rupture", "OK"],
+                         "besoin": [23.0, 0.0], "fiches": [22, 0], "seuil": [0.0, 0.0], "a_commander": [23.0, 0.0]})
+    al = gi.alertes_maintenance(f, enc, etat, arret_prolonge_j=7)
+    objets = [(a["Gravité"], a["Objet"]) for a in al]
+    assert set(objets[:2]) == {("Critique", "A — MDU"), ("Élevée", "A — Onduleur")}       # fiches hors délai, URGENT critique
+    assert ("Critique", "A") in objets and ("Moyenne", "C") in objets and ("B", "B") not in objets   # arrêt de 2 j : sous le seuil
+    assert ("Élevée", "A-024 — Climatiseur") in objets and all("B-001" not in o for _, o in objets)
+    assert len(al) == 5 and all(set(a) == {"Gravité", "Domaine", "Objet", "Constat", "Action recommandée"} for a in al)
+    assert len(gi.alertes_maintenance(f, enc, etat, 7, max_par_regle=1)) == 1 + 1 + 2 + 1    # plafond + ligne de synthèse
+    assert gi.alertes_maintenance(None, None, None) == []

@@ -957,6 +957,194 @@ def chefs_sans_equipe(visites: pd.DataFrame, equipes: pd.DataFrame, zone_par_sit
     return t.sort_values("Visites", ascending=False).reset_index(names="Chef")
 
 
+# ============================================================================= lot 5 : stocks et alertes
+TYPES_MOUVEMENT = ["Entrée", "Sortie", "Inventaire"]
+_SIGNES = {"Entrée": 1, "Sortie": -1, "Ajustement": 1}          # « Ajustement » : ancien type, quantité signée
+STATUTS_STOCK = ["Rupture", "Sous le seuil", "OK"]
+
+
+def stocks_par_magasin(mouvements: pd.DataFrame | None) -> pd.DataFrame:
+    """Stock de chaque article dans chaque magasin.
+
+    Un mouvement « Inventaire » FIXE la quantité comptée à sa date ; les mouvements postérieurs s'y ajoutent
+    (entrées) ou s'en retranchent (sorties). Sans inventaire, le stock est la somme de tous les mouvements.
+    À date égale, l'ordre d'enregistrement départage. Colonnes : code, magasin, stock, dernier_inventaire."""
+    cols = ["code", "magasin", "stock", "dernier_inventaire"]
+    if mouvements is None or mouvements.empty:
+        return pd.DataFrame(columns=cols)
+    m = mouvements.assign(date=pd.to_datetime(mouvements["date"], errors="coerce"),
+                          quantite=pd.to_numeric(mouvements["quantite"], errors="coerce").fillna(0),
+                          magasin=mouvements["magasin"].map(lambda x: "Non précisé" if est_vide(x) else str(x)),
+                          _ordre=range(len(mouvements))).sort_values(["date", "_ordre"], na_position="first")
+    lignes = []
+    for (code, mag), g_ in m.groupby(["code", "magasin"], sort=True):
+        stock, inv = 0.0, pd.NaT
+        for typ, q, d in zip(g_["type"], g_["quantite"], g_["date"]):
+            if typ == "Inventaire":
+                stock, inv = float(q), d
+            else:
+                stock += _SIGNES.get(typ, 0) * float(q)
+        lignes.append({"code": code, "magasin": mag, "stock": stock, "dernier_inventaire": inv})
+    return pd.DataFrame(lignes, columns=cols)
+
+
+def besoins_par_materiel(f: pd.DataFrame) -> pd.DataFrame:
+    """Besoin d'un matériel = quantité affectée − quantité remplacée sur les fiches ENCORE OUVERTES (historiques
+    comprises), fiche par fiche (un excédent de remplacement sur une fiche n'efface pas le besoin d'une autre).
+    Les câbles et lignes (mètres) sont exclus. Index : nom de matériel normalisé ; colonnes : besoin, fiches."""
+    o = f[f["ouvert"] & ~f["lineaire"].astype(bool) & (f["materiel"] != "Non renseigné")]
+    reste = (o["qte_affectee"] - o["qte_remplacee"]).clip(lower=0)
+    o = o.assign(_r=reste, _k=o["materiel"].map(cle))
+    o = o[o["_r"] > 0]
+    return o.groupby("_k").agg(besoin=("_r", "sum"), fiches=("_r", "size"))
+
+
+def a_commander(besoin: float, seuil: float, stock: float) -> float:
+    """À commander = besoin + seuil minimum − stock (jamais négatif)."""
+    return max(float(besoin or 0) + float(seuil or 0) - float(stock or 0), 0.0)
+
+
+def statut_stock(stock: float, seuil: float, besoin: float) -> str:
+    """« Rupture » : stock nul alors qu'il y a un besoin ou un seuil ; « Sous le seuil » : stock inférieur au
+    seuil ou insuffisant pour couvrir besoin + seuil ; « OK » sinon."""
+    stock, seuil, besoin = float(stock or 0), float(seuil or 0), float(besoin or 0)
+    if stock <= 0 and (besoin > 0 or seuil > 0):
+        return "Rupture"
+    if stock < besoin + seuil:
+        return "Sous le seuil"
+    return "OK"
+
+
+def etat_du_stock(articles: pd.DataFrame, stocks: pd.DataFrame, f: pd.DataFrame, magasin: str | None = None) -> pd.DataFrame:
+    """Une ligne par article : stock (tous magasins ou un seul), seuil, besoin des fiches ouvertes, à commander,
+    valeur et statut. Le besoin et le « à commander » portent sur l'article, quel que soit le magasin."""
+    cols = ["code", "designation", "categorie", "unite", "stock", "stock_total", "seuil", "besoin", "fiches", "a_commander",
+            "prix_unitaire", "valeur", "statut", "lineaire"]
+    if articles is None or articles.empty:
+        return pd.DataFrame(columns=cols)
+    tot = stocks.groupby("code")["stock"].sum() if len(stocks) else pd.Series(dtype=float)
+    vue = stocks[stocks["magasin"] == magasin].groupby("code")["stock"].sum() if magasin and len(stocks) else tot
+    bes = besoins_par_materiel(f) if f is not None and len(f) else pd.DataFrame(columns=["besoin", "fiches"])
+    a = articles.copy()
+    k = a["designation"].map(cle)
+    a["lineaire"] = a["designation"].map(est_lineaire)
+    a["stock_total"] = a["code"].map(tot).fillna(0.0)
+    a["stock"] = a["code"].map(vue).fillna(0.0)
+    a["seuil"] = pd.to_numeric(a["stock_mini"], errors="coerce").fillna(0.0)
+    a["besoin"] = k.map(bes["besoin"]).fillna(0.0).where(~a["lineaire"], 0.0)
+    a["fiches"] = k.map(bes["fiches"]).fillna(0).astype(int).where(~a["lineaire"], 0)
+    a["a_commander"] = [a_commander(b, s_, t) for b, s_, t in zip(a["besoin"], a["seuil"], a["stock_total"])]
+    prix = pd.to_numeric(a["prix_unitaire"], errors="coerce")
+    a["prix_unitaire"] = prix.where(prix > 0)
+    a["valeur"] = a["stock_total"] * a["prix_unitaire"]
+    a["statut"] = [statut_stock(t, s_, b) for t, s_, b in zip(a["stock_total"], a["seuil"], a["besoin"])]
+    return a[cols].sort_values("code").reset_index(drop=True)
+
+
+def indicateurs_stock(etat: pd.DataFrame, mouvements: pd.DataFrame, maintenant: pd.Timestamp, nb_magasins: int) -> dict:
+    d = pd.to_datetime(mouvements["date"], errors="coerce") if mouvements is not None and len(mouvements) else pd.Series(dtype="datetime64[ns]")
+    m30 = mouvements[d >= pd.Timestamp(maintenant) - pd.Timedelta(days=30)] if len(d) else mouvements
+    avec_prix = etat["prix_unitaire"].notna() if len(etat) else pd.Series(dtype=bool)
+    return {"articles": len(etat), "magasins": nb_magasins,
+            "rupture": int((etat["statut"] == "Rupture").sum()) if len(etat) else 0,
+            "sous_seuil": int((etat["statut"] == "Sous le seuil").sum()) if len(etat) else 0,
+            "a_commander": int((etat["a_commander"] > 0).sum()) if len(etat) else 0,
+            "valeur": float(etat.loc[avec_prix, "valeur"].sum()) if len(etat) and avec_prix.any() else None,
+            "articles_sans_prix": int((~avec_prix & (etat["stock_total"] > 0)).sum()) if len(etat) else 0,
+            "mouvements_30j": 0 if m30 is None else len(m30),
+            "sorties_30j": 0 if m30 is None or not len(m30) else int((m30["type"] == "Sortie").sum())}
+
+
+def controler_mouvement(v: dict, maintenant: pd.Timestamp, stock_magasin: float = 0.0) -> list[str]:
+    """Anomalies bloquantes d'un mouvement de stock. `v` : code, type, quantite, date, magasin, saisi_par, site."""
+    err = []
+    if est_vide(v.get("code")):
+        err.append("Choisis l'article.")
+    typ = v.get("type")
+    if typ not in TYPES_MOUVEMENT:
+        err.append("Choisis le type de mouvement : entrée, sortie ou inventaire.")
+    q = v.get("quantite")
+    if q is None or pd.isna(q):
+        err.append("Renseigne la quantité.")
+    elif typ == "Inventaire" and q < 0:
+        err.append("La quantité comptée à l'inventaire ne peut pas être négative.")
+    elif typ != "Inventaire" and q <= 0:
+        err.append("La quantité doit être supérieure à zéro.")
+    elif typ == "Sortie" and q > float(stock_magasin or 0) + 1e-9:
+        err.append(f"Sortie impossible : le stock de ce magasin est de {float(stock_magasin or 0):g}. Commence par un "
+                   "inventaire du magasin si son stock de départ n'a pas été saisi.")
+    d = v.get("date")
+    if d is None or pd.isna(d):
+        err.append("Renseigne la date du mouvement.")
+    elif pd.Timestamp(d).normalize() > pd.Timestamp(maintenant).normalize():
+        err.append("La date du mouvement ne peut pas être dans le futur.")
+    if est_vide(v.get("magasin")):
+        err.append("Choisis le magasin.")
+    if est_vide(v.get("saisi_par")):
+        err.append("Indique qui saisit le mouvement.")
+    if typ == "Sortie" and est_vide(v.get("site")):
+        err.append("Indique le site destinataire de la sortie.")
+    return err
+
+
+def controler_article(v: dict, codes_existants: set) -> list[str]:
+    err = []
+    if est_vide(v.get("code")):
+        err.append("Renseigne le code de l'article.")
+    elif str(v["code"]).strip().upper() in {str(c).strip().upper() for c in codes_existants}:
+        err.append("Ce code d'article existe déjà.")
+    if est_vide(v.get("designation")):
+        err.append("Renseigne la désignation de l'article.")
+    for champ, lib in (("stock_mini", "Le seuil minimum"), ("prix_unitaire", "Le prix unitaire")):
+        x = v.get(champ)
+        if x is not None and not pd.isna(x) and x < 0:
+            err.append(f"{lib} ne peut pas être négatif.")
+    return err
+
+
+def sorties_par_mois(mouvements: pd.DataFrame | None) -> pd.DataFrame:
+    if mouvements is None or mouvements.empty:
+        return pd.DataFrame(columns=["Mois", "Quantité sortie", "Sorties"])
+    so = mouvements[mouvements["type"] == "Sortie"]
+    d = pd.to_datetime(so["date"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    g_ = so.groupby(d)["quantite"]
+    return pd.DataFrame({"Quantité sortie": g_.sum(), "Sorties": g_.size()}).reset_index(names="Mois")
+
+
+def alertes_maintenance(f: pd.DataFrame, arrets_cours: pd.DataFrame, etat_stock: pd.DataFrame, arret_prolonge_j: float = 7,
+                        max_par_regle: int = 30) -> list[dict]:
+    """Alertes PROPOSÉES pour la maintenance des centrales (elles ne s'affichent que si l'utilisateur les active) :
+    fiches urgentes ou critiques hors délai, arrêts en cours prolongés, articles en rupture de stock.
+    Chaque alerte : Gravité, Domaine, Objet, Constat, Action recommandée."""
+    al = []
+    dom = "Maintenance des centrales"
+    if f is not None and len(f):
+        x = f[f["ouvert"] & f["hors_delai"] & f["priorite"].isin(["URGENT", "CRITIQUE"])].sort_values("retard_j", ascending=False)
+        for r in x.head(max_par_regle).itertuples():
+            al.append({"Gravité": "Critique" if r.priorite == "URGENT" else "Élevée", "Domaine": dom, "Objet": f"{r.site} — {r.materiel}",
+                       "Constat": f"Fiche {r.priorite} hors délai de {int(r.retard_j)} j (constat du {r.date_constat:%d/%m/%Y}).",
+                       "Action recommandée": "Programmer l'intervention ou mettre la fiche à jour si elle est traitée."})
+        if len(x) > max_par_regle:
+            al.append({"Gravité": "Élevée", "Domaine": dom, "Objet": "Fiches urgentes ou critiques",
+                       "Constat": f"{len(x) - max_par_regle} autre(s) fiche(s) urgente(s) ou critique(s) hors délai.",
+                       "Action recommandée": "Voir le backlog de « Suivi de la maintenance »."})
+    if arrets_cours is not None and len(arrets_cours):
+        for r in arrets_cours.itertuples():
+            if pd.isna(r.duree_j):
+                al.append({"Gravité": "Moyenne", "Domaine": dom, "Objet": r.site, "Constat": "Arrêt en cours dont le début est inconnu (date à vérifier).",
+                           "Action recommandée": "Renseigner la date de début, ou la remise en marche si la centrale a redémarré."})
+            elif r.duree_j >= arret_prolonge_j:
+                al.append({"Gravité": "Critique", "Domaine": dom, "Objet": r.site,
+                           "Constat": f"À l'arrêt depuis {r.duree_j:.0f} j (cause : {r.cause or 'non précisée'}).",
+                           "Action recommandée": "Dépêcher l'équipe de zone ; saisir la remise en marche dès le redémarrage."})
+    if etat_stock is not None and len(etat_stock):
+        for r in etat_stock[etat_stock["statut"] == "Rupture"].sort_values("a_commander", ascending=False).head(max_par_regle).itertuples():
+            al.append({"Gravité": "Élevée", "Domaine": dom, "Objet": f"{r.code} — {r.designation}",
+                       "Constat": f"Rupture de stock : besoin de {r.besoin:g} sur {r.fiches} fiche(s) ouverte(s), seuil {r.seuil:g}.",
+                       "Action recommandée": f"Commander {r.a_commander:g} unité(s)."})
+    return al
+
+
 def maintenant_douala() -> pd.Timestamp:
     from zoneinfo import ZoneInfo
     return pd.Timestamp(datetime.now(ZoneInfo("Africa/Douala")).replace(tzinfo=None)).normalize()

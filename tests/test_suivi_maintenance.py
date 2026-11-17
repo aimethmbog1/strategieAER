@@ -223,3 +223,84 @@ def test_parcours_equipes_et_missions(monkeypatch, tmp_path):
     bi = at.session_state["gmao_bi"].iloc[-1]
     assert (bi["equipe"], bi["chef"], bi["statut"], bi["type"], bi["origine"]) == ("Équipe Essai", "Chef Essai", "Planifié", "Préventive", "Mission programmée")
     assert {m.label: m.value for m in at.metric}["Missions à venir"] == "1"
+
+
+def _gmao(monkeypatch, tmp_path, module):
+    monkeypatch.chdir(RACINE)
+    monkeypatch.setenv("AER_AUTH_DISABLED", "1")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / (module + '.sqlite')}")
+    at = AppTest.from_file(str(next((RACINE / "vues").glob("23_*"))), default_timeout=300)
+    at.session_state["gm_mod"] = module
+    at.run()
+    assert not at.exception, at.exception[0].stack_trace[-5:]
+    return at
+
+
+def test_parcours_stocks(monkeypatch, tmp_path):
+    """Inventaire, sortie refusée puis acceptée vers un site, magasin ajouté, article hors catalogue, paramètres."""
+    at = _gmao(monkeypatch, tmp_path, "stocks")
+    mv = lambda: at.session_state["gmao_mouvements"]          # noqa: E731
+    code = at.selectbox(key="stk_a_0").options[0]
+    code = code.split(" — ")[0]
+    # inventaire du magasin central : 10 comptés
+    at.selectbox(key="stk_a_0").set_value(code)
+    at.selectbox(key="stk_t_0").set_value("Inventaire")
+    at.number_input(key="stk_q_0").set_value(10)
+    at.text_input(key="stk_p_0").set_value("Magasinier")
+    ok, err = _valider(at, "Enregistrer")
+    assert ok and not err, err
+    assert mv().iloc[-1]["type"] == "Inventaire" and mv().iloc[-1]["auteur"] == "Magasinier"
+    # sortie de 12 : refusée (stock 10) ; sortie sans site : refusée ; sortie de 4 vers un site : acceptée
+    for q, site, attendu in ((12, "Gouna", "Sortie impossible"), (4, None, "site destinataire"), (4, "Gouna", None)):
+        at.selectbox(key=f"stk_a_{at.session_state['_stk_n']}").set_value(code)
+        n_ = at.session_state["_stk_n"]
+        at.selectbox(key=f"stk_t_{n_}").set_value("Sortie")
+        at.number_input(key=f"stk_q_{n_}").set_value(q)
+        at.selectbox(key=f"stk_s_{n_}").set_value(site)        # le formulaire garde la saisie précédente : on la remplace
+        at.text_input(key=f"stk_r_{n_}").set_value("BS-001")
+        at.text_input(key=f"stk_p_{n_}").set_value("Magasinier")
+        ok, err = _valider(at, "Enregistrer")
+        assert (ok and not err) if attendu is None else (not ok and attendu in err[0]), err
+    s = mv().iloc[-1]
+    assert (s["type"], s["site_destinataire"], s["reference"]) == ("Sortie", "Gouna", "BS-001")
+    from utils import gmao_indicateurs as gi
+    assert gi.stocks_par_magasin(mv()).set_index("code").at[code, "stock"] == 6
+    # magasins : ajout, doublon refusé, retrait refusé tant qu'il reste du stock
+    at.text_input(key="stk_mag_n").set_value("Antenne Essai")
+    at.button(key="stk_mag_ok").click().run()
+    assert "Antenne Essai" in at.selectbox(key="stk_mag_r").options      # liste lue par l'application elle-même
+    at.text_input(key="stk_mag_n").set_value("antenne  essai")
+    at.button(key="stk_mag_ok").click().run()
+    assert any("existe déjà" in e.value for e in at.error)
+    at.selectbox(key="stk_mag_r").set_value(at.selectbox(key="stk_mag_r").options[0])
+    at.button(key="stk_mag_r_ok").click().run()
+    assert any("contient encore" in e.value for e in at.error)
+    # article hors catalogue, puis paramètres (seuil, prix)
+    at.text_input(key="stk_art_c_0").set_value("zz-001")
+    at.text_input(key="stk_art_d_0").set_value("Fusible d'essai")
+    ok, err = _valider(at, "Créer l'article")
+    assert ok and not err, err
+    art = at.session_state["gmao_articles"].set_index("code")
+    assert art.at["ZZ-001", "designation"] == "Fusible d'essai"
+    at.selectbox(key="stk_par_a").set_value("ZZ-001").run()
+    at.number_input(key="stk_par_s_ZZ-001").set_value(3)
+    at.number_input(key="stk_par_p_ZZ-001").set_value(2500)
+    [b for b in at.get("form_submit_button") if b.label == "💾 Enregistrer"][1].click()   # 2e : formulaire des paramètres
+    at.run()
+    ok = [x.value for x in at.success]
+    art = at.session_state["gmao_articles"].set_index("code")
+    assert ok and (art.at["ZZ-001", "stock_mini"], art.at["ZZ-001", "prix_unitaire"]) == (3, 2500)
+    assert {m.label: m.value for m in at.metric}["Mouvements 30 j"] == "2"
+
+
+def test_alertes_de_maintenance_desactivees_par_defaut(monkeypatch, tmp_path):
+    monkeypatch.chdir(RACINE)
+    monkeypatch.setenv("AER_AUTH_DISABLED", "1")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'alertes.sqlite'}")
+    at = AppTest.from_file(str(next((RACINE / "vues").glob("19_*"))), default_timeout=300).run()
+    assert not at.exception, at.exception[0].stack_trace[-5:]
+    texte = lambda: " ".join(str(d.value.to_string()) if hasattr(d.value, "to_string") else str(d.value) for d in at.dataframe)  # noqa: E731
+    assert "Maintenance des centrales" not in texte()
+    at.checkbox[0].check().run()
+    assert not at.exception, at.exception[0].stack_trace[-5:]
+    assert "Maintenance des centrales" in texte() and "hors délai" in texte()

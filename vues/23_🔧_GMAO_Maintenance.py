@@ -352,10 +352,12 @@ def traiter_bi(bid):
                                 format_func=lambda c: f"{c} — {niv.set_index('code').at[c, 'designation']} "
                                 f"(stock {niv.set_index('code').at[c, 'stock']:.0f})")
             q = c2.number_input("Quantité", 1.0, 100000.0, 1.0, 1.0, key=f"tb_q_{bid}")
-            mag = c3.selectbox("Magasin", gc.MAGASINS, key=f"tb_mag_{bid}")
+            from utils import gmao_suivi as gs
+            mag = c3.selectbox("Magasin", gs.magasins(), key=f"tb_mag_{bid}")
             if st.button("➖ Sortir du stock pour ce BI", key=f"tb_out_{bid}"):
                 gc.ajouter("gmao_mouvements", [{"date": pd.Timestamp(gc.maintenant()), "code": code, "type": "Sortie",
-                                                "quantite": q, "magasin": mag, "bi_id": bid, "motif": f"Consommation {bid}"}],
+                                                "quantite": q, "magasin": mag, "bi_id": bid, "motif": f"Consommation {bid}",
+                                                "site_destinataire": b["site"], "reference": bid}],
                            "MV", f"sortie de stock {code} × {q:g} pour {bid}")
                 ok(f"{q:g} × {code} imputé(s) à {bid}.")
     with a3:
@@ -613,50 +615,19 @@ def module_planning():
 
 # ============================================================================= STOCKS
 def module_stocks():
-    niv = gc.niveaux_stock()
-    if not niv.empty:
-        kpi_row([("Articles", str(len(niv)), None), ("Sous le stock mini", str(int(niv["alerte"].sum())), None),
-                 ("Valeur du stock (FCFA)", f"{niv['valeur'].sum():,.0f}".replace(",", " "), None)])
-    t1, t2, t3, t4 = st.tabs(["📦 Niveaux de stock", "🔁 Mouvement", "📚 Catalogue", "📈 Consommations"])
+    from utils import gmao_suivi as gs
+    from utils import gmao_suivi_ui as gsu
+    t1, t3, t4 = st.tabs(["📦 État du stock et mouvements", "📚 Catalogue", "📈 Consommations"])
     with t1:
-        if niv.empty:
-            st.info("Catalogue vide.")
-        else:
-            f = st.checkbox("Uniquement les articles en alerte", key="stk_al")
-            v = niv[niv["alerte"]] if f else niv
-            st.dataframe(v, hide_index=True, width="stretch", height=420,
-                         column_config={"alerte": st.column_config.CheckboxColumn("⚠️ Alerte"),
-                                        "valeur": st.column_config.NumberColumn("Valeur (FCFA)", format="localized")})
-    with t2:
-        if niv.empty:
-            st.info("Ajoute d'abord des articles au catalogue.")
-        else:
-            n = st.session_state.get("_mv_n", 0)
-            c1, c2, c3 = st.columns([3, 1, 1])
-            code = c1.selectbox("Article", niv["code"], key=f"mv_c_{n}",
-                                format_func=lambda c: f"{c} — {niv.set_index('code').at[c, 'designation']}")
-            typ = c2.selectbox("Mouvement", ["Entrée", "Sortie", "Ajustement"], key=f"mv_t_{n}")
-            q = c3.number_input("Quantité", value=1.0, step=1.0, key=f"mv_q_{n}",
-                                help="Ajustement : quantité positive ou négative (inventaire).")
-            c1, c2 = st.columns(2)
-            mag = c1.selectbox("Magasin", gc.MAGASINS, key=f"mv_m_{n}")
-            motif = c2.text_input("Motif / référence", key=f"mv_mo_{n}")
-            if st.button("Enregistrer le mouvement", type="primary", key=f"mv_ok_{n}"):
-                gc.ajouter("gmao_mouvements", [{"date": pd.Timestamp(gc.maintenant()), "code": code, "type": typ,
-                                                "quantite": q, "magasin": mag, "motif": motif}], "MV",
-                           f"{typ.lower()} de stock {code} × {q:g}")
-                st.session_state["_mv_n"] = n + 1
-                ok("Mouvement enregistré.")
-        mv = gc.table("gmao_mouvements")
-        if not mv.empty:
-            st.dataframe(mv.sort_values("date", ascending=False).head(200), hide_index=True, width="stretch")
+        sites_s, _ = gs.sites_suivis(ref, bi)
+        gsu.onglet_stocks(gs.fiches(auj, bi), sites_s)
     with t3:
         art = gc.table("gmao_articles")
         st.caption("Modifie directement le tableau (stock mini, prix, magasin…) puis enregistre. Le catalogue de départ "
                    "reprend les codes matériel des journaux de maintenance.")
         ed = st.data_editor(art, num_rows="dynamic", hide_index=True, width="stretch", key="cat_ed",
                             column_config={"systeme": st.column_config.SelectboxColumn(options=gc.SYSTEMES),
-                                           "magasin": st.column_config.SelectboxColumn(options=gc.MAGASINS)})
+                                           "magasin": st.column_config.SelectboxColumn(options=gs.magasins())})
         if st.button("💾 Enregistrer le catalogue", key="cat_ok"):
             gc.sauver("gmao_articles", ed.dropna(subset=["code"]), "catalogue d'articles modifié")
             ok("Catalogue enregistré.")
@@ -719,7 +690,8 @@ def module_achats():
                                format_func=lambda i: f"{i} — {enc.set_index('id').at[i, 'designation']} "
                                f"× {enc.set_index('id').at[i, 'quantite']:g} ({enc.set_index('id').at[i, 'statut']})")
             nst = c2.selectbox("Nouveau statut", gc.STATUTS_ACHAT, key="ach_st")
-            mag = c3.selectbox("Magasin de réception", gc.MAGASINS, key="ach_mag")
+            from utils import gmao_suivi as gs
+            mag = c3.selectbox("Magasin de réception", gs.magasins(), key="ach_mag")
             if st.button("Mettre à jour", key="ach_ok"):
                 a = enc.set_index("id").loc[aid]
                 vals = {"statut": nst}

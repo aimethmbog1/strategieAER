@@ -29,6 +29,14 @@ with st.expander("⚙️ Seuils"):
         "silence_jours": c[4].number_input("Centrale silencieuse (jours)", 1, 30, int(sv.get("silence_jours", 2))),
         "fraicheur_jours": c[5].number_input("Données sources anciennes (jours)", 7, 365, int(sv.get("fraicheur_jours", 60))),
     }
+    c = st.columns([3, 2, 3])
+    seuils["maintenance_actives"] = c[0].checkbox(
+        "Activer les alertes de maintenance des centrales", value=bool(sv.get("maintenance_actives", False)),
+        help="Règles proposées : fiches urgentes ou critiques hors délai, arrêts en cours prolongés, articles en rupture de stock.")
+    seuils["arret_prolonge_j"] = c[1].number_input("Arrêt prolongé à partir de (jours)", 1, 365, int(sv.get("arret_prolonge_j", 7)),
+                                                   disabled=not seuils["maintenance_actives"])
+    c[2].caption("Désactivées par défaut. Elles reposent sur les fiches, les arrêts déclarés et l'état du stock du module "
+                 "« Suivi de la maintenance ».")
     memoriser("alertes", "seuils", seuils)
     st.caption("💾 Seuils enregistrés dans la base : ils s'appliquent à tous les utilisateurs.")
 

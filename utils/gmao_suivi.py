@@ -557,3 +557,92 @@ def programmer_mission(site: dict, date_prevue, equipe: str, type_mission: str, 
              "centrale_arret": False, "date_creation": pd.Timestamp(aujourd_hui).normalize(),
              "date_prevue": pd.Timestamp(date_prevue).normalize(), "equipe": equipe, "chef": chef}
     return gc.ajouter("gmao_bi", [ligne], "BI", f"mission programmée — {site['site']} le {ligne['date_prevue']:%d/%m/%Y} ({equipe})")[0]
+
+
+# ============================================================================= lot 5 : stocks
+def magasins() -> list[str]:
+    """Magasins configurés (paramètre de l'application) ; à défaut, la liste d'origine du GMAO."""
+    m = valeur(PAGE, "magasins", None)
+    return [str(x) for x in m] if isinstance(m, list) and m else list(gc.MAGASINS)
+
+
+def stocks() -> pd.DataFrame:
+    return gi.stocks_par_magasin(gc.table("gmao_mouvements"))
+
+
+def ajouter_magasin(nom: str) -> None:
+    propre = " ".join(str(nom or "").split())
+    actuels = magasins()
+    if not propre:
+        raise ValueError("Renseigne le nom du nouveau magasin.")
+    if gi.cle_nom(propre) in {gi.cle_nom(m) for m in actuels}:
+        raise ValueError("Ce magasin existe déjà.")
+    enregistrer_reglages({"magasins": actuels + [propre]})
+
+
+def retirer_magasin(nom: str) -> None:
+    """Retire un magasin de la liste, seulement s'il ne contient plus aucun stock (rien ne disparaît en silence)."""
+    actuels = magasins()
+    if nom not in actuels:
+        raise ValueError("Magasin introuvable.")
+    if len(actuels) == 1:
+        raise ValueError("Il faut garder au moins un magasin.")
+    s = stocks()
+    reste = s[(s["magasin"] == nom) & (s["stock"].abs() > 1e-9)]
+    if len(reste):
+        raise ValueError(f"Le magasin « {nom} » contient encore {len(reste)} article(s) en stock : fais un inventaire à zéro "
+                         "ou transfère-les (sortie puis entrée) avant de le retirer.")
+    enregistrer_reglages({"magasins": [m for m in actuels if m != nom]})
+
+
+def enregistrer_mouvement(v: dict) -> str:
+    """Enregistre un mouvement de stock : entrée, sortie (vers un site) ou inventaire (quantité comptée).
+    `v` : code, type, quantite, date, magasin, site, reference, saisi_par."""
+    maintenant = pd.Timestamp(gc.maintenant())
+    s = stocks()
+    dispo = s.loc[(s["code"] == v.get("code")) & (s["magasin"] == v.get("magasin")), "stock"].sum()
+    err = gi.controler_mouvement(v, maintenant, dispo)
+    if v.get("code") and v["code"] not in set(gc.table("gmao_articles")["code"]):
+        err.append("Article inconnu du catalogue.")
+    if v.get("magasin") and v["magasin"] not in magasins():
+        err.append("Magasin inconnu : ajoute-le d'abord à la liste des magasins.")
+    if err:
+        raise ValueError("\n".join(err))
+    d = pd.Timestamp(v["date"])
+    if d.normalize() == maintenant.normalize():
+        d = maintenant                              # mouvement du jour : horodaté à l'instant de la saisie
+    ligne = {"date": d, "code": v["code"], "type": v["type"], "quantite": float(v["quantite"]), "magasin": v["magasin"],
+             "site_destinataire": None if gi.est_vide(v.get("site")) else str(v["site"]).strip(),
+             "reference": None if gi.est_vide(v.get("reference")) else str(v["reference"]).strip(),
+             "motif": None if gi.est_vide(v.get("reference")) else str(v["reference"]).strip(),
+             "auteur": " ".join(str(v["saisi_par"]).split())}
+    detail = (f"inventaire {v['code']} au {d:%d/%m/%Y} : {ligne['quantite']:g} compté(s) ({v['magasin']})" if v["type"] == "Inventaire"
+              else f"{v['type'].lower()} de stock {v['code']} × {ligne['quantite']:g} ({v['magasin']})"
+              + (f" vers {ligne['site_destinataire']}" if ligne["site_destinataire"] else ""))
+    return gc.ajouter("gmao_mouvements", [ligne], "MV", detail)[0]
+
+
+def creer_article(v: dict) -> str:
+    """Article hors catalogue : code, désignation, catégorie, unité, seuil minimum, prix unitaire."""
+    art = gc.table("gmao_articles")
+    err = gi.controler_article(v, set(art["code"].dropna()))
+    if err:
+        raise ValueError("\n".join(err))
+    code = str(v["code"]).strip().upper()
+    ligne = {"code": code, "designation": " ".join(str(v["designation"]).split()), "categorie": v.get("categorie"),
+             "systeme": gc.CATEGORIE_VERS_SYSTEME.get(v.get("categorie")), "unite": v.get("unite") or "u",
+             "magasin": magasins()[0], "stock_mini": float(v.get("stock_mini") or 0),
+             "prix_unitaire": float(v.get("prix_unitaire") or 0)}
+    gc.ajouter("gmao_articles", [ligne], None, f"article hors catalogue créé : {code} — {ligne['designation']}")
+    return code
+
+
+def parametrer_article(code: str, stock_mini, prix_unitaire) -> None:
+    for x, lib in ((stock_mini, "Le seuil minimum"), (prix_unitaire, "Le prix unitaire")):
+        if x is not None and not pd.isna(x) and x < 0:
+            raise ValueError(f"{lib} ne peut pas être négatif.")
+    art = gc.table("gmao_articles")
+    if code not in set(art["code"]):
+        raise ValueError("Article introuvable.")
+    gc.modifier("gmao_articles", code, {"stock_mini": float(stock_mini or 0), "prix_unitaire": float(prix_unitaire or 0)},
+                f"article {code} : seuil {float(stock_mini or 0):g}, prix {float(prix_unitaire or 0):g} FCFA", cle="code")

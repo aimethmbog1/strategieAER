@@ -51,7 +51,8 @@ COLS = {
     "gmao_plans": ["id", "libelle", "type", "systeme", "phases", "regions", "periodicite_j", "duree_h", "equipe",
                    "prochaine_echeance", "actif", "consignes"],
     "gmao_articles": ["code", "designation", "categorie", "systeme", "unite", "magasin", "stock_mini", "prix_unitaire"],
-    "gmao_mouvements": ["id", "date", "code", "type", "quantite", "magasin", "bi_id", "achat_id", "motif", "auteur"],
+    "gmao_mouvements": ["id", "date", "code", "type", "quantite", "magasin", "bi_id", "achat_id", "motif", "auteur",
+                        "site_destinataire", "reference"],
     "gmao_achats": ["id", "date", "code", "designation", "quantite", "fournisseur", "prix_unitaire", "montant", "statut",
                     "date_reception", "bi_id", "commentaire"],
     "gmao_budget": ["annee", "poste", "montant_prevu"],
@@ -159,8 +160,9 @@ def niveaux_stock() -> pd.DataFrame:
     if art.empty:
         return pd.DataFrame(columns=["code", "designation", "categorie", "unite", "stock", "stock_mini", "prix_unitaire",
                                      "valeur", "alerte"])
-    signe = mv["type"].map({"Entrée": 1, "Sortie": -1, "Ajustement": 1}).fillna(0)
-    st_ = (mv["quantite"].fillna(0) * signe).groupby(mv["code"]).sum()
+    from . import gmao_indicateurs as gi     # un inventaire fixe la quantité à sa date ; les mouvements suivants s'y ajoutent
+    sm = gi.stocks_par_magasin(mv)
+    st_ = sm.groupby("code")["stock"].sum() if len(sm) else pd.Series(dtype=float)
     out = art.copy()
     out["stock"] = out["code"].map(st_).fillna(0)
     out["valeur"] = out["stock"] * out["prix_unitaire"].fillna(0)

@@ -772,3 +772,178 @@ def onglet_equipes(sites: pd.DataFrame, visites: pd.DataFrame, ref: pd.DataFrame
         if len(orph):
             st.caption("« ➕ Équipe » préremplit le formulaire du haut avec le chef et sa zone principale ; il reste à "
                        "donner un nom à l'équipe et à enregistrer.")
+
+
+# ============================================================================= STOCKS (module Stocks du GMAO)
+COULEUR_STATUT = {"Rupture": "🔴 Rupture", "Sous le seuil": "🟠 Sous le seuil", "OK": "🟢 OK"}
+
+
+def onglet_stocks(f: pd.DataFrame, sites: pd.DataFrame) -> None:
+    _flash("_stk_ok")
+    edition = peut_modifier()
+    maintenant = pd.Timestamp(gc.maintenant())
+    mags = gs.magasins()
+    art = gc.table("gmao_articles")
+    mv = gc.table("gmao_mouvements")
+    sm = gs.stocks()
+    etat = gi.etat_du_stock(art, sm, f)
+    k = gi.indicateurs_stock(etat, mv, maintenant, len(mags))
+    kpi_row([("Articles suivis", n(k["articles"]), f"{k['magasins']} magasin(s)"),
+             ("Articles en rupture", n(k["rupture"]), "stock nul avec besoin ou seuil"),
+             ("Sous le seuil ou insuffisants", n(k["sous_seuil"]), None),
+             ("Articles à commander", n(k["a_commander"]), None),
+             ("Valeur du stock", "—" if k["valeur"] is None else n(k["valeur"], suffixe=" FCFA"),
+              "renseigne les prix unitaires" if k["valeur"] is None else
+              (f"{k['articles_sans_prix']} article(s) en stock sans prix" if k["articles_sans_prix"] else None)),
+             ("Mouvements 30 j", n(k["mouvements_30j"]), f"{k['sorties_30j']} sortie(s)")])
+
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.markdown("**Enregistrer un mouvement de stock**")
+        if not edition:
+            st.info("🔒 Votre profil ne permet pas d'enregistrer un mouvement.")
+        elif art.empty:
+            st.info("Le catalogue est vide : crée d'abord un article (« Article hors catalogue » ci-dessous).")
+        else:
+            v = st.session_state.get("_stk_n", 0)
+            libs = dict(zip(art["code"], art["code"] + " — " + art["designation"].astype(str)))
+            nom_u = gs._auteur()
+            with st.form(f"stk_mv_{v}"):
+                c = st.columns(2)
+                code = c[0].selectbox("Article *", list(libs), format_func=libs.get, index=None, key=f"stk_a_{v}", placeholder="Code ou désignation…")
+                typ = c[1].selectbox("Type *", gi.TYPES_MOUVEMENT, key=f"stk_t_{v}")
+                c = st.columns(2)
+                q = c[0].number_input("Quantité *", min_value=0.0, step=1.0, value=None, key=f"stk_q_{v}",
+                                      help="Inventaire : quantité comptée dans le magasin à cette date.")
+                d = c[1].date_input("Date *", value=maintenant.date(), max_value=maintenant.date(), key=f"stk_d_{v}", format="DD/MM/YYYY")
+                c = st.columns(2)
+                mag = c[0].selectbox("Magasin *", mags, key=f"stk_m_{v}")
+                site = c[1].selectbox("Site destinataire (sortie)", sorted(sites["site"].dropna().unique()), index=None,
+                                      accept_new_options=True, key=f"stk_s_{v}", placeholder="Obligatoire pour une sortie")
+                c = st.columns(2)
+                ref_ = c[0].text_input("Référence (BL, bon de sortie…)", key=f"stk_r_{v}")
+                qui = c[1].text_input("Saisi par *", value="" if nom_u == "?" else nom_u, key=f"stk_p_{v}")
+                st.caption("« Inventaire » fixe la quantité comptée dans le magasin à cette date : les mouvements suivants s'y ajoutent.")
+                if st.form_submit_button("💾 Enregistrer", type="primary"):
+                    try:
+                        ident = gs.enregistrer_mouvement({"code": code, "type": typ, "quantite": q, "date": pd.Timestamp(d), "magasin": mag,
+                                                          "site": site, "reference": ref_, "saisi_par": qui})
+                        st.session_state["_stk_n"] = v + 1
+                        _ok("_stk_ok", f"Mouvement {ident} enregistré : {typ.lower()} de {q:g} × {code} ({mag}).")
+                    except ValueError as e:
+                        _erreurs(e)
+    with c2:
+        st.markdown("**Magasins**")
+        par_mag = sm[sm["stock"] > 0].groupby("magasin")["code"].nunique() if len(sm) else pd.Series(dtype=int)
+        st.dataframe(pd.DataFrame({"Magasin": mags, "Articles en stock": [int(par_mag.get(m_, 0)) for m_ in mags]}),
+                     hide_index=True, width="stretch", height=min(38 + 35 * len(mags), 250))
+        if edition:
+            c = st.columns([3, 1])
+            nouveau = c[0].text_input("Nom du nouveau magasin", key="stk_mag_n", label_visibility="collapsed", placeholder="Nom du nouveau magasin")
+            if c[1].button("Ajouter", key="stk_mag_ok"):
+                try:
+                    gs.ajouter_magasin(nouveau)
+                    _ok("_stk_ok", f"Magasin « {' '.join(nouveau.split())} » ajouté.")
+                except ValueError as e:
+                    _erreurs(e)
+            with st.expander("Retirer un magasin"):
+                c = st.columns([3, 1])
+                a_retirer = c[0].selectbox("Magasin", mags, key="stk_mag_r", label_visibility="collapsed")
+                if c[1].button("Retirer", key="stk_mag_r_ok"):
+                    try:
+                        gs.retirer_magasin(a_retirer)
+                        _ok("_stk_ok", f"Magasin « {a_retirer} » retiré de la liste.")
+                    except ValueError as e:
+                        _erreurs(e)
+        so = gi.sorties_par_mois(mv)
+        if so.empty:
+            st.caption("Sorties par mois : aucune sortie enregistrée.")
+        else:
+            fig = px.bar(so, x="Mois", y="Quantité sortie", title="Sorties par mois", color_discrete_sequence=["#0F766E"])
+            fig = plotly_base_layout(fig, height=260)
+            fig.update_layout(margin=dict(t=40), showlegend=False)
+            st.plotly_chart(fig, width="stretch")
+
+    section_title("ÉTAT DU STOCK")
+    c = st.columns([2, 1.6, 1.2, 1.4, 1.6])
+    q_ = c[0].text_input("Rechercher", key="stk_f_q", placeholder="Article ou code…")
+    f_cat = c[1].multiselect("Catégorie", sorted(etat["categorie"].dropna().unique()), key="stk_f_c")
+    f_st = c[2].multiselect("Statut", gi.STATUTS_STOCK, key="stk_f_s")
+    f_mag = c[3].selectbox("Magasin", [None] + mags, format_func=lambda m_: "Tous" if m_ is None else m_, key="stk_f_m")
+    e = gi.etat_du_stock(art, sm, f, f_mag) if f_mag else etat
+    if q_.strip():
+        e = e[(e["code"].astype(str) + " " + e["designation"].astype(str)).str.contains(q_.strip(), case=False, regex=False)]
+    if f_cat:
+        e = e[e["categorie"].isin(f_cat)]
+    if f_st:
+        e = e[e["statut"].isin(f_st)]
+    if e.empty:
+        st.info("Aucun article ne correspond à la sélection.")
+    else:
+        vue = pd.DataFrame({"Code": e["code"], "Désignation": e["designation"], "Catégorie": e["categorie"],
+                            "Stock" + ("" if f_mag is None else f" ({f_mag})"): e["stock"],
+                            "Stock total": e["stock_total"], "Seuil min.": e["seuil"],
+                            "Besoin (fiches ouvertes)": [("—" if lin else f"{b:g} ({fi} fiche(s))" if b else "") for b, fi, lin in zip(e["besoin"], e["fiches"], e["lineaire"])],
+                            "À commander": e["a_commander"],
+                            "Prix unit. (FCFA)": e["prix_unitaire"].map(lambda x: "" if pd.isna(x) else n(x)), "Statut": e["statut"].map(COULEUR_STATUT)})
+        if f_mag is None:
+            vue = vue.drop(columns="Stock total")
+        st.caption(f"{len(vue)} article(s).")
+        st.dataframe(vue, hide_index=True, width="stretch", height=400,
+                     column_config={"À commander": st.column_config.NumberColumn(format="%.0f")})
+        buf = io.BytesIO()
+        vue.to_excel(buf, index=False)
+        st.download_button("⬇️ Exporter l'état du stock (Excel)", buf.getvalue(), "etat_du_stock.xlsx", key="stk_dl")
+    st.caption("Besoin = quantité affectée − quantité remplacée sur les fiches encore ouvertes (journaux compris), fiche par fiche. "
+               "À commander = besoin + seuil minimum − stock (tous magasins). Câbles et lignes (en mètres) : exclus du suivi en "
+               "pièces (« — »). Le besoin est rattaché à l'article dont la désignation est celle du matériel de la fiche.")
+
+    if edition:
+        c1, c2 = st.columns(2)
+        with c1, st.expander("⚙️ Paramètres d'un article (seuil minimum, prix)"):
+            if art.empty:
+                st.caption("Catalogue vide.")
+            else:
+                libs = dict(zip(art["code"], art["code"] + " — " + art["designation"].astype(str)))
+                code = st.selectbox("Article", list(libs), format_func=libs.get, key="stk_par_a")
+                a_ = art.set_index("code").loc[code]
+                with st.form(f"stk_par_{code}"):
+                    c = st.columns(2)
+                    sm_ = c[0].number_input("Seuil minimum", min_value=0.0, step=1.0, value=float(pd.to_numeric(a_["stock_mini"], errors="coerce") or 0), key=f"stk_par_s_{code}")
+                    pu = c[1].number_input("Prix unitaire (FCFA)", min_value=0.0, step=100.0, value=float(pd.to_numeric(a_["prix_unitaire"], errors="coerce") or 0), key=f"stk_par_p_{code}")
+                    if st.form_submit_button("💾 Enregistrer"):
+                        try:
+                            gs.parametrer_article(code, sm_, pu)
+                            _ok("_stk_ok", f"Article {code} : seuil {sm_:g}, prix {n(pu)} FCFA.")
+                        except ValueError as e_:
+                            _erreurs(e_)
+        with c2, st.expander("➕ Article hors catalogue"):
+            w = st.session_state.get("_stk_art_n", 0)
+            with st.form(f"stk_art_{w}"):
+                c = st.columns(2)
+                code = c[0].text_input("Code *", key=f"stk_art_c_{w}", placeholder="ex. B-030")
+                des = c[1].text_input("Désignation *", key=f"stk_art_d_{w}")
+                c = st.columns(4)
+                cat = c[0].selectbox("Catégorie", sorted(gc.CATEGORIE_VERS_SYSTEME), index=None, accept_new_options=True, key=f"stk_art_k_{w}")
+                un = c[1].text_input("Unité", value="u", key=f"stk_art_u_{w}")
+                sm_ = c[2].number_input("Seuil min.", min_value=0.0, step=1.0, key=f"stk_art_s_{w}")
+                pu = c[3].number_input("Prix (FCFA)", min_value=0.0, step=100.0, key=f"stk_art_p_{w}")
+                if st.form_submit_button("➕ Créer l'article"):
+                    try:
+                        c_ = gs.creer_article({"code": code, "designation": des, "categorie": cat, "unite": un, "stock_mini": sm_, "prix_unitaire": pu})
+                        st.session_state["_stk_art_n"] = w + 1
+                        _ok("_stk_ok", f"Article {c_} créé.")
+                    except ValueError as e_:
+                        _erreurs(e_)
+
+    section_title("JOURNAL DES MOUVEMENTS")
+    if mv.empty:
+        st.info("Aucun mouvement saisi. Commence par un « Inventaire » de chaque magasin pour fixer le stock de départ.")
+        return
+    j = mv.assign(date=pd.to_datetime(mv["date"], errors="coerce")).sort_values("date", ascending=False)
+    des = dict(zip(art["code"], art["designation"]))
+    vue = pd.DataFrame({"Date": j["date"], "Type": j["type"], "Article": j["code"] + " — " + j["code"].map(des).fillna(""),
+                        "Qté": j["quantite"], "Magasin": j["magasin"], "Site / destination": j["site_destinataire"],
+                        "Référence": j["reference"].fillna(j["motif"]), "Fiche": j["bi_id"], "Saisi par": j["auteur"]})
+    st.dataframe(vue.head(500), hide_index=True, width="stretch", height=320,
+                 column_config={"Date": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
